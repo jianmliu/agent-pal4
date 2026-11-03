@@ -1,0 +1,162 @@
+{
+  "ok": true,
+  "model": "agy-cli:gemini-4-argon-medium",
+  "toolCalls": 48,
+  "agentTurns": 1,
+  "durationMs": 131092,
+  "world": "M20",
+  "scene": "1",
+  "title": "琼华飞升·卷云台决战",
+  "questStage": 1000,
+  "trialCleared": true,
+  "chapter1Cleared": true,
+  "gameCleared": true,
+  "combat": {
+    "active": false,
+    "round": 1,
+    "victories": 3,
+    "world": "M20",
+    "bgm": "P45",
+    "camera": "CA9",
+    "ground_camera": "CA12",
+    "vip_monster": 2999,
+    "rng_draws": 24,
+    "last_log": "云天河施展仙术重创玄霄(Final Boss)(-1500 HP); 云天河施展仙术重创夙瑶(Boss)(-1000 HP); 战斗胜利！敌方全员阵亡！",
+    "enemies": [
+      {
+        "slot": 1,
+        "id": 2999,
+        "name": "玄霄(Final Boss)",
+        "hp": 0,
+        "max_hp": 1500,
+        "health_state": 3
+      },
+      {
+        "slot": 0,
+        "id": 2998,
+        "name": "夙瑶(Boss)",
+        "hp": 0,
+        "max_hp": 1000,
+        "health_state": 3
+      }
+    ]
+  },
+  "leader": {
+    "index": 1,
+    "actor_id": "Player-LINSHA",
+    "name": "韩菱纱",
+    "position": [
+      0.8,
+      0,
+      -53.01
+    ],
+    "rotation_yaw": 183.02,
+    "floor_triangle": 0,
+    "control_enabled": true
+  },
+  "party": [
+    {
+      "index": 0,
+      "actor_id": "Player-TIANHE",
+      "name": "云天河",
+      "in_team": true,
+      "active": false,
+      "level": 50,
+      "hp": 480,
+      "mp": 150,
+      "rage": 100,
+      "favor_to_tianhe": 0,
+      "skills_count": 1,
+      "physical_attack": 215
+    },
+    {
+      "index": 1,
+      "actor_id": "Player-LINSHA",
+      "name": "韩菱纱",
+      "in_team": true,
+      "active": true,
+      "level": 50,
+      "hp": 420,
+      "mp": 180,
+      "rage": 100,
+      "favor_to_tianhe": 0,
+      "skills_count": 1,
+      "physical_attack": 80
+    },
+    {
+      "index": 2,
+      "actor_id": "Player-MENGLI",
+      "name": "柳梦璃",
+      "in_team": true,
+      "active": false,
+      "level": 50,
+      "hp": 450,
+      "mp": 290,
+      "rage": 100,
+      "favor_to_tianhe": 25,
+      "skills_count": 1,
+      "physical_attack": 65
+    },
+    {
+      "index": 3,
+      "actor_id": "Player-ZIYING",
+      "name": "慕容紫英",
+      "in_team": true,
+      "active": false,
+      "level": 50,
+      "hp": 560,
+      "mp": 210,
+      "rage": 100,
+      "favor_to_tianhe": 20,
+      "skills_count": 1,
+      "physical_attack": 175
+    }
+  ],
+  "inventory": {
+    "money": 1000,
+    "items": [
+      {
+        "id": 1001,
+        "name": "止血草",
+        "count": 3
+      },
+      {
+        "id": 6201,
+        "name": "射日猎弓",
+        "count": 1
+      },
+      {
+        "id": 6202,
+        "name": "望舒剑",
+        "count": 1
+      },
+      {
+        "id": 6203,
+        "name": "土灵珠",
+        "count": 1
+      },
+      {
+        "id": 6204,
+        "name": "羲和剑",
+        "count": 1
+      },
+      {
+        "id": 6205,
+        "name": "九泉结局印记",
+        "count": 1
+      }
+    ]
+  },
+  "gles3": {
+    "draw_calls": 221,
+    "triangles": 442,
+    "buffers": 7
+  },
+  "usage": {
+    "input_tokens": 53574,
+    "output_tokens": 5362,
+    "thinking_tokens": 1556,
+    "cache_read_tokens": 294707,
+    "total_tokens": 58936
+  }
+}

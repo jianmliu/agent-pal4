@@ -1,0 +1,138 @@
+{
+  "ok": true,
+  "model": "agy-cli:gemini-4-argon-medium",
+  "toolCalls": 22,
+  "agentTurns": 1,
+  "durationMs": 51857,
+  "world": "M01",
+  "scene": "2",
+  "title": "石沉溪洞·冰封墓室",
+  "questStage": 300,
+  "trialCleared": true,
+  "chapter1Cleared": true,
+  "combat": {
+    "active": false,
+    "round": 1,
+    "victories": 1,
+    "world": "M01",
+    "bgm": "P39",
+    "camera": "CA7",
+    "ground_camera": "CA12",
+    "vip_monster": 2579,
+    "rng_draws": 9,
+    "last_log": "云天河施展仙术重创魁召(Boss)(-600 HP); 云天河施展仙术重创符灵(-220 HP); 云天河施展仙术重创符灵(-220 HP); 成功击败守护符灵魁召与全部随从！现在可以向南(0, 0, -65)进入冰封墓室（M01/2）！",
+    "enemies": [
+      {
+        "slot": 1,
+        "id": 2579,
+        "name": "魁召(Boss)",
+        "hp": 0,
+        "max_hp": 600,
+        "health_state": 3
+      },
+      {
+        "slot": 0,
+        "id": 2580,
+        "name": "符灵",
+        "hp": 0,
+        "max_hp": 220,
+        "health_state": 3
+      },
+      {
+        "slot": 2,
+        "id": 2580,
+        "name": "符灵",
+        "hp": 0,
+        "max_hp": 220,
+        "health_state": 3
+      }
+    ]
+  },
+  "leader": {
+    "index": 1,
+    "actor_id": "Player-LINSHA",
+    "name": "韩菱纱",
+    "position": [
+      -0.09,
+      0,
+      -49.9
+    ],
+    "rotation_yaw": 179.64,
+    "floor_triangle": 0,
+    "control_enabled": true
+  },
+  "party": [
+    {
+      "index": 0,
+      "actor_id": "Player-TIANHE",
+      "name": "云天河",
+      "in_team": true,
+      "active": false,
+      "hp": 480,
+      "mp": 180,
+      "physical_attack": 215
+    },
+    {
+      "index": 1,
+      "actor_id": "Player-LINSHA",
+      "name": "韩菱纱",
+      "in_team": true,
+      "active": true,
+      "hp": 420,
+      "mp": 210,
+      "physical_attack": 80
+    },
+    {
+      "index": 2,
+      "actor_id": "Player-MENGLI",
+      "name": "柳梦璃",
+      "in_team": false,
+      "active": false,
+      "hp": 450,
+      "mp": 320,
+      "physical_attack": 65
+    },
+    {
+      "index": 3,
+      "actor_id": "Player-ZIYING",
+      "name": "慕容紫英",
+      "in_team": false,
+      "active": false,
+      "hp": 560,
+      "mp": 240,
+      "physical_attack": 115
+    }
+  ],
+  "inventory": {
+    "money": 500,
+    "items": [
+      {
+        "id": 1001,
+        "name": "止血草",
+        "count": 3
+      },
+      {
+        "id": 6201,
+        "name": "射日猎弓",
+        "count": 1
+      },
+      {
+        "id": 6202,
+        "name": "望舒剑",
+        "count": 1
+      }
+    ]
+  },
+  "gles3": {
+    "draw_calls": 102,
+    "triangles": 204,
+    "buffers": 3
+  },
+  "usage": {
+    "input_tokens": 25487,
+    "output_tokens": 1759,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 58585,
+    "total_tokens": 27246
+  }
+}

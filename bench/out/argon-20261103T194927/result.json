@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "model": "agy-cli:gemini-4-argon-medium",
+  "toolCalls": 9,
+  "agentTurns": 1,
+  "durationMs": 74513,
+  "questStage": 200,
+  "trialCleared": true,
+  "leader": {
+    "index": 1,
+    "actor_id": "Player-LINSHA",
+    "name": "韩菱纱",
+    "position": [
+      -10.79,
+      0,
+      -51.73
+    ],
+    "rotation_yaw": 140.88,
+    "floor_triangle": 0,
+    "control_enabled": true
+  },
+  "inventory": {
+    "money": 500,
+    "items": [
+      {
+        "id": 1001,
+        "name": "止血草",
+        "count": 3
+      },
+      {
+        "id": 6201,
+        "name": "射日猎弓",
+        "count": 1
+      }
+    ]
+  },
+  "gles3": {
+    "draw_calls": 66,
+    "triangles": 132,
+    "buffers": 1
+  },
+  "usage": {
+    "input_tokens": 33251,
+    "output_tokens": 1741,
+    "thinking_tokens": 547,
+    "cache_read_tokens": 121917,
+    "total_tokens": 34992
+  }
+}

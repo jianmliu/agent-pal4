@@ -1,0 +1,11 @@
+{
+  "name": "agent-pal4",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless agent-pal4 testing & Web (Wasm + WebGL2 + WORKERFS) scaffold for OpenPAL4 C++20 ChapterHost",
+  "scripts": {
+    "test:headless": "node ./test/run-headless-bench.mjs",
+    "test:chapter-host": "./build/pal4_chapter_host_monster_scene_integration_tests"
+  }
+}
