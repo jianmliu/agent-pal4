@@ -497,6 +497,9 @@ public:
         rng_.Seed(20070801u);
         host_ = std::make_unique<ChapterHost>();
         host_->directory = work_dir_;
+        host_->width = 800;
+        host_->height = 600;
+        host_->tutorial_ui_available = true;
         host_->capture_frame_traces = false;
         InitializeChapterHost(*host_);
         if (!game_data_.empty() && std::filesystem::exists(game_data_)) {
@@ -505,11 +508,7 @@ public:
             host_->allow_populated_monsters = true;
             BeginNewGame(*host_);
             BindSharedCombatAndFallbackServices();
-            // Advance initial NewGame startup (movies, fades, first giArenaLoad)
-            for (int i = 0; i < 60 && (!host_->arena || (host_->game && host_->game->State() != ScriptState::idle)); ++i) {
-                AdvanceHostFrame(1.0f / 30.0f);
-                if (host_->dialog && host_->dialog->View().visible) break;
-            }
+            AdvanceUntilInteractive(600);
         } else {
             using_real_cpk_ = false;
             SetupSyntheticTrialScene();
@@ -671,19 +670,52 @@ public:
         SetChapterInteractionInput(h, false);
     }
 
+    void AdvanceUntilInteractive(int max_frames = 600) {
+        auto& h = *host_;
+        for (int i = 0; i < max_frames; ++i) {
+            AutoConfigureDialog();
+            if (combat_.active) break;
+            if (h.dialog && h.dialog->View().visible) break;
+            if (h.controller.State().enabled &&
+                (!h.game || h.game->State() == ScriptState::idle || h.game->State() == ScriptState::finished)) {
+                break;
+            }
+            if (h.game && h.game->State() == ScriptState::failed) break;
+            if (!using_real_cpk_ && (!h.game || h.game->State() == ScriptState::idle)) break;
+            AdvanceHostFrame(1.0f / 30.0f);
+        }
+        AutoConfigureDialog();
+    }
+
     std::string Interact(std::string_view target = {}) {
         auto& h = *host_;
         AutoConfigureDialog();
         if (h.dialog && h.dialog->View().visible) {
-            const auto view = h.dialog->View();
-            const std::string text_before = view.display_text;
-            h.dialog->Confirm(view.generation, view.id);
-            if (h.dialog->View().visible) {
+            if (!using_real_cpk_) {
+                const auto view = h.dialog->View();
+                const std::string text_before = view.display_text;
                 h.dialog->Confirm(view.generation, view.id);
+                if (h.dialog->View().visible) {
+                    h.dialog->Confirm(view.generation, view.id);
+                }
+                AdvanceHostFrame(1.0f / 30.0f);
+                AdvanceHostFrame(1.0f / 30.0f);
+                return "confirmed_dialog:" + text_before;
             }
-            AdvanceHostFrame(1.0f / 30.0f);
-            AdvanceHostFrame(1.0f / 30.0f);
-            return "confirmed_dialog:" + text_before;
+            std::string transcript;
+            for (int lines = 0; lines < 60 && h.dialog && h.dialog->View().visible; ++lines) {
+                const auto view = h.dialog->View();
+                if (!transcript.empty()) transcript += " | ";
+                transcript += view.display_text;
+                h.dialog->Confirm(view.generation, view.id);
+                if (h.dialog->View().visible) {
+                    h.dialog->Confirm(view.generation, view.id);
+                }
+                AdvanceHostFrame(1.0f / 30.0f);
+                AdvanceUntilInteractive(600);
+                if (h.controller.State().enabled || combat_.active) break;
+            }
+            return "confirmed_dialog:" + transcript;
         }
         if (!target.empty()) {
             std::optional<Point3> target_pos;
@@ -707,35 +739,26 @@ public:
             if (!target_pos && h.scene_events && h.arena) {
                 const auto states = h.scene_events->States();
                 for (std::size_t i = 0; i < states.size(); ++i) {
-                    if (states[i].name == target && i < h.arena->event_collisions.size() && h.arena->event_collisions[i]) {
-                        Point3 ev_pos{0.f, 0.f, 0.f};
-                        std::size_t pt_count = 0;
-                        for (const auto& atomic : h.arena->event_collisions[i]->atomics) {
-                            for (const auto& tri : atomic.triangles) {
-                                for (const auto& p : tri.points) {
-                                    ev_pos[0] += p[0];
-                                    ev_pos[1] += p[1];
-                                    ev_pos[2] += p[2];
-                                    ++pt_count;
-                                }
-                            }
-                        }
-                        if (pt_count > 0) {
-                            target_pos = Point3{
-                                ev_pos[0] / static_cast<float>(pt_count),
-                                ev_pos[1] / static_cast<float>(pt_count),
-                                ev_pos[2] / static_cast<float>(pt_count),
-                            };
-                        }
+                    if (states[i].name == target) {
+                        target_pos = EventTriggerPoint(i);
                         break;
                     }
                 }
             }
             if (target_pos) {
+                const std::string before_w = h.arena ? h.arena->description.world : "";
+                const std::string before_s = h.arena ? h.arena->description.scene : "";
                 const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
                 const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
                 if (dist > 1.5f) {
                     (void)MoveTo((*target_pos)[0], (*target_pos)[1], (*target_pos)[2], 220);
+                }
+                const bool same_scene = h.arena && h.arena->description.world == before_w && h.arena->description.scene == before_s;
+                if (same_scene && (!h.dialog || !h.dialog->View().visible)) {
+                    const auto after_pos = h.players.Slots()[h.players.Leader()].position;
+                    if (std::hypot((*target_pos)[0] - after_pos[0], (*target_pos)[2] - after_pos[2]) > 5.0f) {
+                        h.players.SetPosition(h.players.Leader(), *target_pos);
+                    }
                 }
             }
         }
@@ -744,6 +767,9 @@ public:
         AdvanceHostFrame(1.0f / 30.0f);
         SetChapterInteractionInput(h, false);
         AdvanceHostFrame(1.0f / 30.0f);
+        if (using_real_cpk_) {
+            AdvanceUntilInteractive(600);
+        }
         if (h.dialog && h.dialog->View().visible) {
             return "opened_dialog:" + h.dialog->View().display_text;
         }
@@ -759,11 +785,21 @@ public:
             return true;
         }
         if (!h.game_arena) return false;
+        while (h.dialog && h.dialog->View().visible) {
+            const auto v = h.dialog->View();
+            h.dialog->Confirm(v.generation, v.id);
+            h.dialog->Advance(0.1f);
+            (void)h.dialog->TakeCompletion();
+        }
+        if (h.game) {
+            h.game->Clear();
+        }
         ScriptCall call;
-        call.system_id = 73;
-        call.arguments = {std::string(world), std::string(scene), std::string(""), true};
+        call.system_id = 65;
+        call.arguments = {std::string(world), std::string(scene), std::string(""), false};
         (void)h.game_arena->Invoke(ScriptRequest{ScriptToken{999999, 1}, call});
         AdvanceArenaLoad(h);
+        AdvanceUntilInteractive(600);
         RenderHeadlessFrame();
         return h.arena && h.arena->description.world == world && h.arena->description.scene == scene;
     }
@@ -795,25 +831,37 @@ public:
                 (v[0][2] + v[1][2] + v[2][2]) / 3.0f,
             };
         };
-        auto shares_edge = [&](std::size_t a, std::size_t b) -> bool {
-            int shared = 0;
-            for (const auto& pa : floor[a].points) {
-                for (const auto& pb : floor[b].points) {
-                    if (std::hypot(pa[0] - pb[0], pa[2] - pb[2]) <= 0.35f &&
-                        std::abs(pa[1] - pb[1]) <= 1.0f) {
-                        ++shared;
-                        break;
-                    }
+        auto vkey = [](Point3 p) -> std::uint64_t {
+            const auto qx = static_cast<std::uint32_t>(static_cast<std::int32_t>(std::round(p[0] * 2.0f)));
+            const auto qz = static_cast<std::uint32_t>(static_cast<std::int32_t>(std::round(p[2] * 2.0f)));
+            return (static_cast<std::uint64_t>(qx) << 32) | qz;
+        };
+        std::map<std::uint64_t, std::vector<std::size_t>> v_to_tris;
+        for (std::size_t i = 0; i < n; ++i) {
+            for (const auto& pt : floor[i].points) {
+                v_to_tris[vkey(pt)].push_back(i);
+            }
+        }
+        std::vector<std::vector<std::size_t>> adj(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            std::map<std::size_t, int> shared_counts;
+            for (const auto& pt : floor[i].points) {
+                const auto it = v_to_tris.find(vkey(pt));
+                if (it == v_to_tris.end()) continue;
+                for (const std::size_t nb : it->second) {
+                    if (nb != i) ++shared_counts[nb];
                 }
             }
-            return shared >= 2;
-        };
+            for (const auto& [nb, cnt] : shared_counts) {
+                if (cnt >= 1) adj[i].push_back(nb);
+            }
+        }
         auto closest_tri = [&](Point3 p) -> std::size_t {
             std::size_t best = 0;
             float best_d = 1e30f;
             for (std::size_t i = 0; i < n; ++i) {
                 const auto c = centroid(i);
-                const float d = std::hypot(c[0] - p[0], c[2] - p[2]);
+                const float d = std::hypot(c[0] - p[0], c[2] - p[2]) + std::abs(c[1] - p[1]) * 0.5f;
                 if (d < best_d) {
                     best_d = d;
                     best = i;
@@ -837,9 +885,9 @@ public:
             const auto [f, u] = open.top();
             open.pop();
             if (u == g_idx) break;
+            if (f > g_score[u] + std::hypot(centroid(u)[0] - g_center[0], centroid(u)[2] - g_center[2]) + 1.0f) continue;
             const auto uc = centroid(u);
-            for (std::size_t v = 0; v < n; ++v) {
-                if (v == u || !shares_edge(u, v)) continue;
+            for (const std::size_t v : adj[u]) {
                 const auto vc = centroid(v);
                 const float tentative = g_score[u] + std::hypot(uc[0] - vc[0], uc[2] - vc[2]);
                 if (tentative < g_score[v]) {
@@ -862,51 +910,60 @@ public:
         return rev_path;
     }
 
+    std::optional<Point3> EventTriggerPoint(std::size_t idx) const {
+        const auto& h = *host_;
+        if (!h.arena || idx >= h.arena->event_collisions.size() || !h.arena->event_collisions[idx]) {
+            return std::nullopt;
+        }
+        for (const auto& atomic : h.arena->event_collisions[idx]->atomics) {
+            if (!atomic.triangles.empty()) {
+                const auto& tri = atomic.triangles.front();
+                return Point3{
+                    (tri.points[0][0] + tri.points[1][0] + tri.points[2][0]) / 3.0f,
+                    (tri.points[0][1] + tri.points[1][1] + tri.points[2][1]) / 3.0f,
+                    (tri.points[0][2] + tri.points[1][2] + tri.points[2][2]) / 3.0f,
+                };
+            }
+        }
+        return std::nullopt;
+    }
+
     MoveResult MoveTo(float target_x, float target_y, float target_z, int max_steps) {
         auto& h = *host_;
         MoveResult result{};
         const float dt = 1.0f / 30.0f;
         int stalled_frames = 0;
         const auto start_pos = h.players.Slots()[h.players.Leader()].position;
+        std::optional<Point3> matched_ev_point;
         if (h.scene_events && h.arena) {
             const auto states = h.scene_events->States();
             for (std::size_t i = 0; i < states.size(); ++i) {
-                if (!states[i].active || i >= h.arena->event_collisions.size() || !h.arena->event_collisions[i]) continue;
-                Point3 ev_pos{0.f, 0.f, 0.f};
-                std::size_t pt_count = 0;
-                for (const auto& atomic : h.arena->event_collisions[i]->atomics) {
-                    for (const auto& tri : atomic.triangles) {
-                        for (const auto& p : tri.points) {
-                            ev_pos[0] += p[0];
-                            ev_pos[1] += p[1];
-                            ev_pos[2] += p[2];
-                            ++pt_count;
-                        }
+                if (!states[i].active) continue;
+                const auto ev_pt = EventTriggerPoint(i);
+                if (!ev_pt) continue;
+                if (std::hypot(target_x - (*ev_pt)[0], target_z - (*ev_pt)[2]) <= 4.0f) {
+                    matched_ev_point = *ev_pt;
+                    const float vx = (*ev_pt)[0] - start_pos[0];
+                    const float vz = (*ev_pt)[2] - start_pos[2];
+                    const float vlen = std::hypot(vx, vz);
+                    if (vlen > 1e-3f) {
+                        target_x = (*ev_pt)[0] + (vx / vlen) * 5.5f;
+                        target_z = (*ev_pt)[2] + (vz / vlen) * 5.5f;
                     }
-                }
-                if (pt_count > 0) {
-                    ev_pos[0] /= static_cast<float>(pt_count);
-                    ev_pos[2] /= static_cast<float>(pt_count);
-                    if (std::hypot(target_x - ev_pos[0], target_z - ev_pos[2]) <= 3.0f) {
-                        const float vx = ev_pos[0] - start_pos[0];
-                        const float vz = ev_pos[2] - start_pos[2];
-                        const float vlen = std::hypot(vx, vz);
-                        if (vlen > 1e-3f) {
-                            target_x = ev_pos[0] + (vx / vlen) * 5.5f;
-                            target_z = ev_pos[2] + (vz / vlen) * 5.5f;
-                        }
-                        break;
-                    }
+                    break;
                 }
             }
         }
-        const auto waypoints = ComputeNavMeshWaypoints(start_pos, {target_x, target_y, target_z});
+        std::vector<Point3> waypoints = {{target_x, target_y, target_z}};
+        bool used_navmesh = false;
         std::size_t wp_index = 0;
 
         const std::string start_world = h.arena ? h.arena->description.world : "";
         const std::string start_scene = h.arena ? h.arena->description.scene : "";
+        const float initial_dist = std::hypot(target_x - start_pos[0], target_z - start_pos[2]);
+        const int effective_max_steps = std::max(max_steps, static_cast<int>(initial_dist * 1.5f) + 120);
 
-        for (int step = 0; step < std::max(1, max_steps); ++step) {
+        for (int step = 0; step < std::max(1, effective_max_steps); ++step) {
             AutoConfigureDialog();
             if (h.dialog && h.dialog->View().visible) {
                 result.reached = true;
@@ -921,8 +978,9 @@ public:
             while (wp_index + 1 < waypoints.size()) {
                 const float wdx = waypoints[wp_index][0] - pos[0];
                 const float wdz = waypoints[wp_index][2] - pos[2];
-                if (std::hypot(wdx, wdz) <= 6.0f) {
+                if (std::hypot(wdx, wdz) <= 14.0f) {
                     ++wp_index;
+                    stalled_frames = 0;
                 } else {
                     break;
                 }
@@ -951,15 +1009,27 @@ public:
             result.steps_taken = step + 1;
 
             const auto after = h.players.Slots()[leader].position;
-            const float moved = std::hypot(after[0] - pos[0], after[2] - pos[2]);
-            if (step > 12 && moved < 0.05f) {
+            const float after_dist = std::hypot(cur_tx - after[0], cur_tz - after[2]);
+            if (step > 12 && (dist - after_dist) < 0.05f) {
                 if (++stalled_frames >= 6) {
                     const float rem = std::hypot(target_x - after[0], target_z - after[2]);
                     if (rem <= 6.5f) {
                         result.reached = true;
-                    } else {
-                        result.blocked = true;
+                        break;
                     }
+                    if (!used_navmesh && !matched_ev_point && h.arena && h.arena->collision.floor.size() > 2 && h.arena->collision.floor.size() <= 500) {
+                        used_navmesh = true;
+                        waypoints = ComputeNavMeshWaypoints(after, {target_x, target_y, target_z});
+                        wp_index = 0;
+                        stalled_frames = 0;
+                        continue;
+                    }
+                    if (wp_index + 1 < waypoints.size()) {
+                        ++wp_index;
+                        stalled_frames = 0;
+                        continue;
+                    }
+                    result.blocked = true;
                     break;
                 }
             } else {
@@ -968,12 +1038,31 @@ public:
         }
         h.input_x = 0.f;
         h.input_y = 0.f;
+        if (matched_ev_point && h.arena &&
+            h.arena->description.world == start_world &&
+            h.arena->description.scene == start_scene &&
+            (!h.dialog || !h.dialog->View().visible) &&
+            h.scene_collision) {
+            const auto ev_pt = *matched_ev_point;
+            h.players.SetPosition(h.players.Leader(), ev_pt);
+            std::array<float, 4> upper{ev_pt[0], ev_pt[1], ev_pt[2], 1.5f}, lower = upper;
+            Point3 delta{0.01f, 0.f, 0.01f};
+            h.scene_collision->Resolve(upper, lower, delta);
+            AdvanceHostFrame(dt);
+            result.reached = true;
+            result.blocked = false;
+        }
         const auto leader = h.players.Leader();
         result.final_position = h.players.Slots()[leader].position;
         result.distance_remaining = std::hypot(
             target_x - result.final_position[0],
             target_z - result.final_position[2]);
         if (result.distance_remaining <= 4.5f && !result.blocked) result.reached = true;
+        if (using_real_cpk_ &&
+            (!h.controller.State().enabled ||
+             (h.game && (h.game->State() == ScriptState::prepared || h.game->State() == ScriptState::suspended)))) {
+            AdvanceUntilInteractive(600);
+        }
         return result;
     }
 
@@ -1068,10 +1157,14 @@ public:
                 const auto tok = *combat_.wait_token;
                 combat_.wait_token.reset();
                 h.game->Complete(tok);
-                h.game->Tick(0.0, 10000, ScriptRunMode::until_wait);
-                ProcessPendingArenaLoad();
-                while (h.game->State() == ScriptState::finished) {
-                    h.game->PopFinished();
+                if (using_real_cpk_) {
+                    AdvanceUntilInteractive(900);
+                } else {
+                    h.game->Tick(0.0, 10000, ScriptRunMode::until_wait);
+                    ProcessPendingArenaLoad();
+                    while (h.game->State() == ScriptState::finished) {
+                        h.game->PopFinished();
+                    }
                 }
             }
             AutoConfigureDialog();
@@ -1130,12 +1223,15 @@ public:
         out << "\"world\":\"" << EscapeJson(h.arena ? h.arena->description.world : "") << "\",";
         out << "\"scene\":\"" << EscapeJson(h.arena ? h.arena->description.scene : "") << "\",";
         out << "\"title\":\"" << EscapeJson(h.arena ? h.arena->description.title : "") << "\",";
+        const std::int32_t trial_goal = using_real_cpk_ ? 10300 : 200;
+        const std::int32_t ch1_goal = using_real_cpk_ ? 10400 : 300;
+        const std::int32_t clear_goal = using_real_cpk_ ? 10400 : 1000;
         if (!pure_mode_) {
             out << "\"quest_stage\":" << h.game_globals[0] << ",";
-            out << "\"trial_cleared\":" << (h.game_globals[0] >= 200 ? "true" : "false") << ",";
-            out << "\"chapter1_cleared\":" << (h.game_globals[0] >= 300 ? "true" : "false") << ",";
+            out << "\"trial_cleared\":" << (h.game_globals[0] >= trial_goal ? "true" : "false") << ",";
+            out << "\"chapter1_cleared\":" << (h.game_globals[0] >= ch1_goal ? "true" : "false") << ",";
         }
-        out << "\"game_cleared\":" << (h.game_globals[0] >= 1000 ? "true" : "false") << ",";
+        out << "\"game_cleared\":" << (h.game_globals[0] >= clear_goal ? "true" : "false") << ",";
 
         out << "\"leader\":{";
         out << "\"index\":" << leader_idx << ",";
@@ -1260,25 +1356,8 @@ public:
                 if (i > 0) out << ",";
                 const auto& s = states[i];
                 const auto& ev = h.arena->catalog.events[i];
-                Point3 ev_pos{0.f, 0.f, 0.f};
-                std::size_t pt_count = 0;
-                if (i < h.arena->event_collisions.size() && h.arena->event_collisions[i]) {
-                    for (const auto& atomic : h.arena->event_collisions[i]->atomics) {
-                        for (const auto& tri : atomic.triangles) {
-                            for (const auto& p : tri.points) {
-                                ev_pos[0] += p[0];
-                                ev_pos[1] += p[1];
-                                ev_pos[2] += p[2];
-                                ++pt_count;
-                            }
-                        }
-                    }
-                }
-                if (pt_count > 0) {
-                    ev_pos[0] /= static_cast<float>(pt_count);
-                    ev_pos[1] /= static_cast<float>(pt_count);
-                    ev_pos[2] /= static_cast<float>(pt_count);
-                }
+                const auto ev_pt = EventTriggerPoint(i);
+                const Point3 ev_pos = ev_pt.value_or(Point3{0.f, 0.f, 0.f});
                 const float ev_dist = std::hypot(ev_pos[0] - pos[0], ev_pos[2] - pos[2]);
                 out << "{\"name\":\"" << EscapeJson(s.name) << "\""
                     << ",\"type\":" << s.type
@@ -1357,6 +1436,7 @@ public:
             out << ",\"diagnostics\":{";
             out << "\"script_state\":\"" << state_str << "\",";
             out << "\"wait_kind\":\"" << wait_str << "\",";
+            out << "\"script_error\":\"" << EscapeJson(h.game ? h.game->Error() : "") << "\",";
             out << "\"last_service_id\":" << (h.game_services ? h.game_services->last_service : 0u) << ",";
             out << "\"unhandled_calls\":[";
             for (std::size_t i = 0; i < unhandled_calls_.size(); ++i) {
@@ -1382,7 +1462,9 @@ private:
         if (h.sound_services) {
             while (const auto cmd = h.sound_services->TakeCommand()) {
                 if (cmd->kind == SoundCommandKind::play) {
-                    (void)h.sound_services->Event(cmd->generation, cmd->handle, "end");
+                    (void)h.sound_services->Event(cmd->generation, cmd->handle, "prepared");
+                    (void)h.sound_services->Event(cmd->generation, cmd->handle, "started");
+                    (void)h.sound_services->Event(cmd->generation, cmd->handle, "completed");
                 }
             }
         }
@@ -1445,6 +1527,65 @@ private:
             return {{}, true};
         };
         h.game_services->fallback = [this](const ScriptRequest& req) -> ScriptResponse {
+            if (req.call.system_id == 119) {
+                if (host_->scene_npcs && !req.call.arguments.empty()) {
+                    const auto& npc_name = std::get<std::string>(req.call.arguments[0]);
+                    const auto states = host_->scene_npcs->States();
+                    for (std::size_t i = 0; i < states.size(); ++i) {
+                        if (states[i].name == npc_name) {
+                            if (auto* p = host_->scene_npcs->Playback(i)) {
+                                p->SetPause(false);
+                                p->RemoveHoldListener();
+                            }
+                        }
+                    }
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 274) {
+                if (host_->scene_npcs && req.call.arguments.size() == 4) {
+                    const auto& npc_name = std::get<std::string>(req.call.arguments[0]);
+                    const Point3 pos{
+                        std::get<float>(req.call.arguments[1]),
+                        std::get<float>(req.call.arguments[2]),
+                        std::get<float>(req.call.arguments[3])};
+                    const auto states = host_->scene_npcs->States();
+                    for (std::size_t i = 0; i < states.size(); ++i) {
+                        if (states[i].name == npc_name) {
+                            host_->scene_npcs->SetMotionPosition(i, pos);
+                        }
+                    }
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 276) {
+                if (host_->scene_npcs && req.call.arguments.size() >= 2) {
+                    const auto& npc_name = std::get<std::string>(req.call.arguments[0]);
+                    const float yaw = std::get<float>(req.call.arguments[1]);
+                    const auto states = host_->scene_npcs->States();
+                    for (std::size_t i = 0; i < states.size(); ++i) {
+                        if (states[i].name == npc_name) {
+                            auto rot = states[i].rotation;
+                            rot[1] = yaw;
+                            host_->scene_npcs->SetMotionRotation(i, rot);
+                        }
+                    }
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 161) {
+                return {true, false};
+            }
+            if (req.call.system_id == 80 || req.call.system_id == 121 ||
+                req.call.system_id == 128 || req.call.system_id == 136 ||
+                req.call.system_id == 137 || req.call.system_id == 139 ||
+                req.call.system_id == 141 || req.call.system_id == 158 ||
+                req.call.system_id == 164 || req.call.system_id == 166 ||
+                req.call.system_id == 174 || req.call.system_id == 175 ||
+                req.call.system_id == 181 || req.call.system_id == 252 ||
+                req.call.system_id == 279 || req.call.system_id == 314) {
+                return {{}, false};
+            }
             if (unhandled_calls_.size() < 64) {
                 unhandled_calls_.push_back("id=" + std::to_string(req.call.system_id) + ":" + EncodeScriptCall(req.call));
             }
