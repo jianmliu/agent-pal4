@@ -491,6 +491,7 @@ public:
 
     void Reset() {
         combat_ = {};
+        unhandled_calls_.clear();
         prev_world_.clear();
         prev_scene_.clear();
         rng_.Seed(20070801u);
@@ -560,6 +561,8 @@ public:
         combat_.rng_draws = cp.combat_rng_draws;
         if (!using_real_cpk_) {
             LoadSyntheticArena(cp.world, cp.scene, false);
+        } else if (h.arena && (h.arena->description.world != cp.world || h.arena->description.scene != cp.scene)) {
+            WarpScene(cp.world, cp.scene);
         }
         prev_world_ = cp.prev_world;
         prev_scene_ = cp.prev_scene;
@@ -668,7 +671,7 @@ public:
         SetChapterInteractionInput(h, false);
     }
 
-    std::string Interact() {
+    std::string Interact(std::string_view target = {}) {
         auto& h = *host_;
         AutoConfigureDialog();
         if (h.dialog && h.dialog->View().visible) {
@@ -682,6 +685,33 @@ public:
             AdvanceHostFrame(1.0f / 30.0f);
             return "confirmed_dialog:" + text_before;
         }
+        if (!target.empty()) {
+            std::optional<Point3> target_pos;
+            if (h.scene_npcs) {
+                for (const auto& s : h.scene_npcs->States()) {
+                    if (s.name == target) {
+                        target_pos = s.position;
+                        break;
+                    }
+                }
+            }
+            if (!target_pos && h.scene_objects && h.arena) {
+                const auto states = h.scene_objects->States();
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    if (states[i].name == target) {
+                        target_pos = h.arena->catalog.gobs[i].position;
+                        break;
+                    }
+                }
+            }
+            if (target_pos) {
+                const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
+                const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
+                if (dist > 11.0f) {
+                    (void)MoveTo((*target_pos)[0], (*target_pos)[1], (*target_pos)[2], 200);
+                }
+            }
+        }
         SetChapterInteractionInput(h, false);
         SetChapterInteractionInput(h, true);
         AdvanceHostFrame(1.0f / 30.0f);
@@ -691,6 +721,28 @@ public:
             return "opened_dialog:" + h.dialog->View().display_text;
         }
         return "interaction_dispatched";
+    }
+
+    bool WarpScene(std::string_view world, std::string_view scene) {
+        auto& h = *host_;
+        if (world.empty() || scene.empty()) return false;
+        if (!using_real_cpk_) {
+            LoadSyntheticArena(std::string(world), std::string(scene), true);
+            RenderHeadlessFrame();
+            return true;
+        }
+        if (!h.game_arena) return false;
+        ScriptCall call;
+        call.system_id = 73;
+        call.arguments = {std::string(world), std::string(scene), std::string(""), true};
+        (void)h.game_arena->Invoke(ScriptRequest{ScriptToken{999999, 1}, call});
+        AdvanceArenaLoad(h);
+        RenderHeadlessFrame();
+        return h.arena && h.arena->description.world == world && h.arena->description.scene == scene;
+    }
+
+    void SetQuestStage(std::int32_t stage) {
+        host_->game_globals[0] = stage;
     }
 
     struct MoveResult {
@@ -1180,6 +1232,34 @@ public:
         out << "\"triangles\":" << gles.triangles_submitted << ",";
         out << "\"buffers\":" << gles.buffers_uploaded;
         out << "}";
+        if (!pure_mode_) {
+            const char* state_str = "idle";
+            const char* wait_str = "none";
+            if (h.game) {
+                switch (h.game->State()) {
+                    case ScriptState::idle: state_str = "idle"; break;
+                    case ScriptState::prepared: state_str = "prepared"; break;
+                    case ScriptState::suspended: state_str = "suspended"; break;
+                    case ScriptState::finished: state_str = "finished"; break;
+                    case ScriptState::failed: state_str = "failed"; break;
+                }
+                switch (h.game->WaitKind()) {
+                    case ScriptWaitKind::none: wait_str = "none"; break;
+                    case ScriptWaitKind::delay: wait_str = "delay"; break;
+                    case ScriptWaitKind::external: wait_str = "external"; break;
+                }
+            }
+            out << ",\"diagnostics\":{";
+            out << "\"script_state\":\"" << state_str << "\",";
+            out << "\"wait_kind\":\"" << wait_str << "\",";
+            out << "\"last_service_id\":" << (h.game_services ? h.game_services->last_service : 0u) << ",";
+            out << "\"unhandled_calls\":[";
+            for (std::size_t i = 0; i < unhandled_calls_.size(); ++i) {
+                if (i > 0) out << ",";
+                out << "\"" << EscapeJson(unhandled_calls_[i]) << "\"";
+            }
+            out << "]}";
+        }
         out << "}";
         return out.str();
     }
@@ -1259,7 +1339,10 @@ private:
             }
             return {{}, true};
         };
-        h.game_services->fallback = [](const ScriptRequest& req) -> ScriptResponse {
+        h.game_services->fallback = [this](const ScriptRequest& req) -> ScriptResponse {
+            if (unhandled_calls_.size() < 64) {
+                unhandled_calls_.push_back("id=" + std::to_string(req.call.system_id) + ":" + EncodeScriptCall(req.call));
+            }
             switch (req.call.system_id) {
                 case 61: case 62: case 63: case 64:
                 case 191: case 192: case 193:
@@ -2248,6 +2331,7 @@ private:
     std::string prev_scene_;
     std::map<std::string, std::string> ui_files_;
     std::map<std::string, EngineCheckpoint> checkpoints_;
+    std::vector<std::string> unhandled_calls_;
     std::unique_ptr<ChapterHost> host_;
     CombatFormulaCatalog formulas_ = BuildSyntheticFormulaCatalog();
     pal4::RandomNumberGenerator rng_;
@@ -2283,8 +2367,8 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         const bool ok = engine.LoadCheckpoint(slot);
         return engine.ObserveJson(ok ? "checkpoint_loaded:" + slot : "checkpoint_load_failed");
     }
-    if (cmd == "step") {
-        const int frames = static_cast<int>(ExtractJsonNumber(line, "frames").value_or(1));
+    if (cmd == "step" || cmd == "wait") {
+        const int frames = static_cast<int>(ExtractJsonNumber(line, "frames").value_or(30));
         const float move_x = static_cast<float>(ExtractJsonNumber(line, "move_x").value_or(0.0));
         const float move_y = static_cast<float>(ExtractJsonNumber(line, "move_y").value_or(0.0));
         const float cam_yaw = static_cast<float>(ExtractJsonNumber(line, "cam_yaw").value_or(0.0));
@@ -2302,8 +2386,20 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         return engine.ObserveJson(tag);
     }
     if (cmd == "interact") {
-        const std::string tag = engine.Interact();
+        const auto target = ExtractJsonString(line, "target").value_or("");
+        const std::string tag = engine.Interact(target);
         return engine.ObserveJson(tag);
+    }
+    if (cmd == "warp_scene") {
+        const auto world = ExtractJsonString(line, "world").value_or("");
+        const auto scene = ExtractJsonString(line, "scene").value_or("");
+        const bool ok = engine.WarpScene(world, scene);
+        return engine.ObserveJson(ok ? "warped:" + world + "/" + scene : "warp_failed");
+    }
+    if (cmd == "set_quest_stage") {
+        const auto stage = static_cast<std::int32_t>(ExtractJsonNumber(line, "quest_stage").value_or(0));
+        engine.SetQuestStage(stage);
+        return engine.ObserveJson("quest_stage_set");
     }
     if (cmd == "switch_leader") {
         const int index = static_cast<int>(ExtractJsonNumber(line, "index").value_or(0));

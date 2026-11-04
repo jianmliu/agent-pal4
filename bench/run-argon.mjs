@@ -84,8 +84,23 @@ const TOOLS = [
   },
   {
     name: 'interact',
-    description: 'If a dialog box is visible, advance/confirm the dialog. Otherwise interact with the nearest NPC or chest (GOB) within 14 units.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'If a dialog box is visible, advance/confirm the dialog. Otherwise interact with the nearest NPC or chest (GOB) within 14 units (or auto-walk to and interact with a named target NPC/object if `target` is specified).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Optional NPC or object name to approach and interact with' },
+      },
+    },
+  },
+  {
+    name: 'wait',
+    description: 'Advance simulation by `frames` (default 30 = 1 second) while waiting for cutscenes, camera pans, NPC movement, or timed scripts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        frames: { type: 'number', description: 'Frames to advance at 30 FPS (default 30)' },
+      },
+    },
   },
   {
     name: 'switch_leader',
@@ -132,6 +147,33 @@ const TOOLS = [
       required: ['slot'],
     },
   },
+  ...(MODE === 'normal'
+    ? [
+        {
+          name: 'warp_scene',
+          description: '[Normal Mode Debug] Directly load and warp to a target (world, scene) arena.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              world: { type: 'string', description: 'World ID (e.g. "Q01", "M01", "Q02")' },
+              scene: { type: 'string', description: 'Scene ID (e.g. "N01", "1", "2")' },
+            },
+            required: ['world', 'scene'],
+          },
+        },
+        {
+          name: 'set_quest_stage',
+          description: '[Normal Mode Debug] Override main story global_mvar (quest_stage) for Play-and-Fix testing.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              quest_stage: { type: 'number', description: 'Target global_mvar integer value' },
+            },
+            required: ['quest_stage'],
+          },
+        },
+      ]
+    : []),
 ];
 
 async function main() {
