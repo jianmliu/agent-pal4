@@ -10,12 +10,14 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
+#include <queue>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -447,8 +449,36 @@ public:
         std::uint32_t rng_draws{};
     };
 
-    explicit AgentPal4Engine(std::string work_dir)
+    struct PlayerSlotSnapshot {
+        bool inventory_enabled{};
+        bool active{};
+        bool visible{true};
+        Point3 position{};
+        Point3 rotation{};
+        PlayerProgress progress{};
+        std::array<std::int32_t, 4> favor{};
+        std::vector<std::uint32_t> skills;
+        std::array<std::uint32_t, 6> equipment{};
+        std::uint32_t script_index{};
+    };
+
+    struct EngineCheckpoint {
+        std::string world;
+        std::string scene;
+        std::string prev_world;
+        std::string prev_scene;
+        ScriptGlobals globals{};
+        std::uint32_t leader{};
+        std::array<PlayerSlotSnapshot, 4> slots{};
+        std::int32_t money{};
+        std::vector<InventoryRecord> items;
+        int combat_victories{};
+        std::uint32_t combat_rng_draws{};
+    };
+
+    explicit AgentPal4Engine(std::string work_dir, std::string game_data = {})
         : work_dir_(std::move(work_dir)),
+          game_data_(std::move(game_data)),
           formulas_(BuildSyntheticFormulaCatalog()) {
         std::filesystem::create_directories(work_dir_);
         rng_.Seed(20070801u);
@@ -462,14 +492,126 @@ public:
         rng_.Seed(20070801u);
         host_ = std::make_unique<ChapterHost>();
         host_->directory = work_dir_;
+        host_->capture_frame_traces = false;
         InitializeChapterHost(*host_);
-        SetupSyntheticTrialScene();
+        if (!game_data_.empty() && std::filesystem::exists(game_data_)) {
+            using_real_cpk_ = true;
+            host_->game_data = game_data_;
+            host_->allow_populated_monsters = true;
+            BeginNewGame(*host_);
+            BindSharedCombatAndFallbackServices();
+            // Advance initial NewGame startup (movies, fades, first giArenaLoad)
+            for (int i = 0; i < 60 && (!host_->arena || (host_->game && host_->game->State() != ScriptState::idle)); ++i) {
+                AdvanceHostFrame(1.0f / 30.0f);
+                if (host_->dialog && host_->dialog->View().visible) break;
+            }
+        } else {
+            using_real_cpk_ = false;
+            SetupSyntheticTrialScene();
+        }
+    }
+
+    bool SaveCheckpoint(std::string_view slot_name) {
+        auto& h = *host_;
+        if (!h.arena || !h.players.Prepared()) return false;
+        EngineCheckpoint cp;
+        cp.world = h.arena->description.world;
+        cp.scene = h.arena->description.scene;
+        cp.prev_world = prev_world_;
+        cp.prev_scene = prev_scene_;
+        cp.globals = h.game_globals;
+        cp.leader = h.players.Leader();
+        for (std::size_t i = 0; i < 4; ++i) {
+            const auto& src = h.players.Slots()[i];
+            auto& dst = cp.slots[i];
+            dst.inventory_enabled = src.inventory_enabled;
+            dst.active = src.active;
+            dst.visible = src.visible;
+            dst.position = src.position;
+            dst.rotation = src.rotation;
+            dst.progress = src.progress;
+            dst.favor = src.favor;
+            dst.skills = src.skills;
+            dst.equipment = src.equipment;
+            dst.script_index = src.script_index;
+        }
+        if (h.inventory) {
+            cp.money = h.inventory->Money();
+            const auto recs = h.inventory->Records();
+            cp.items.assign(recs.begin(), recs.end());
+        }
+        cp.combat_victories = combat_.victories;
+        cp.combat_rng_draws = combat_.rng_draws;
+        checkpoints_[std::string(slot_name)] = std::move(cp);
+        return true;
+    }
+
+    bool LoadCheckpoint(std::string_view slot_name) {
+        auto it = checkpoints_.find(std::string(slot_name));
+        if (it == checkpoints_.end()) return false;
+        const auto& cp = it->second;
+        auto& h = *host_;
+        combat_ = {};
+        combat_.victories = cp.combat_victories;
+        combat_.rng_draws = cp.combat_rng_draws;
+        if (!using_real_cpk_) {
+            LoadSyntheticArena(cp.world, cp.scene, false);
+        }
+        prev_world_ = cp.prev_world;
+        prev_scene_ = cp.prev_scene;
+        h.game_globals = cp.globals;
+        for (std::size_t i = 0; i < 4; ++i) {
+            auto& dst = const_cast<PlayerSlot&>(h.players.Slots()[i]);
+            const auto& src = cp.slots[i];
+            dst.inventory_enabled = src.inventory_enabled;
+            dst.active = src.active;
+            dst.visible = src.visible;
+            dst.position = src.position;
+            dst.rotation = src.rotation;
+            dst.progress = src.progress;
+            dst.favor = src.favor;
+            dst.skills = src.skills;
+            dst.equipment = src.equipment;
+            dst.script_index = src.script_index;
+        }
+        SwitchLeader(static_cast<std::int32_t>(cp.leader));
+        if (h.inventory) {
+            h.inventory = std::make_unique<Inventory>(h.property_catalog);
+            h.inventory->AdjustMoney(cp.money);
+            for (const auto& item : cp.items) {
+                h.inventory->Add(item.id, static_cast<std::int32_t>(item.count));
+            }
+            h.inventory_services = std::make_unique<InventoryServices>(
+                *h.inventory,
+                h.property_catalog,
+                [&h](std::uint32_t id) -> std::optional<std::string> {
+                    auto found = h.interaction_text.find(id);
+                    if (found != h.interaction_text.end()) return found->second;
+                    return std::optional<std::string>{"获得【%s】×%d"};
+                },
+                [&h](std::string_view text, float x, float y, float duration) {
+                    if (h.interaction_hints) h.interaction_hints->ShowMessage(text, x, y, duration);
+                },
+                [](std::string_view, std::uint32_t) {});
+        }
+        RenderHeadlessFrame();
+        return true;
     }
 
     ChapterHost& Host() { return *host_; }
 
     void AdvanceHostFrame(float dt) {
         auto& h = *host_;
+        AutoAdvanceCutsceneModals();
+        if (using_real_cpk_) {
+            if (!combat_.active) {
+                AdvanceChapterHost(h, dt);
+            }
+            AutoAdvanceCutsceneModals();
+            AutoConfigureDialog();
+            RenderHeadlessFrame();
+            return;
+        }
         ProcessPendingArenaLoad();
         if (h.dialog && h.game) {
             h.dialog->Advance(dt);
@@ -555,11 +697,97 @@ public:
         float distance_remaining{};
     };
 
+    std::vector<Point3> ComputeNavMeshWaypoints(Point3 start, Point3 goal) const {
+        const auto& h = *host_;
+        if (!h.arena || h.arena->collision.floor.size() <= 2) {
+            return {goal};
+        }
+        const auto& floor = h.arena->collision.floor;
+        const std::size_t n = floor.size();
+        auto centroid = [&](std::size_t idx) -> Point3 {
+            const auto& v = floor[idx].points;
+            return {
+                (v[0][0] + v[1][0] + v[2][0]) / 3.0f,
+                (v[0][1] + v[1][1] + v[2][1]) / 3.0f,
+                (v[0][2] + v[1][2] + v[2][2]) / 3.0f,
+            };
+        };
+        auto shares_edge = [&](std::size_t a, std::size_t b) -> bool {
+            int shared = 0;
+            for (const auto& pa : floor[a].points) {
+                for (const auto& pb : floor[b].points) {
+                    if (std::hypot(pa[0] - pb[0], pa[2] - pb[2]) <= 0.35f &&
+                        std::abs(pa[1] - pb[1]) <= 1.0f) {
+                        ++shared;
+                        break;
+                    }
+                }
+            }
+            return shared >= 2;
+        };
+        auto closest_tri = [&](Point3 p) -> std::size_t {
+            std::size_t best = 0;
+            float best_d = 1e30f;
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto c = centroid(i);
+                const float d = std::hypot(c[0] - p[0], c[2] - p[2]);
+                if (d < best_d) {
+                    best_d = d;
+                    best = i;
+                }
+            }
+            return best;
+        };
+        const std::size_t s_idx = closest_tri(start);
+        const std::size_t g_idx = closest_tri(goal);
+        if (s_idx == g_idx) return {goal};
+
+        std::vector<float> g_score(n, 1e30f);
+        std::vector<std::size_t> parent(n, n);
+        using Node = std::pair<float, std::size_t>;
+        std::priority_queue<Node, std::vector<Node>, std::greater<Node>> open;
+        const auto g_center = centroid(g_idx);
+        g_score[s_idx] = 0.0f;
+        open.push({std::hypot(centroid(s_idx)[0] - g_center[0], centroid(s_idx)[2] - g_center[2]), s_idx});
+
+        while (!open.empty()) {
+            const auto [f, u] = open.top();
+            open.pop();
+            if (u == g_idx) break;
+            const auto uc = centroid(u);
+            for (std::size_t v = 0; v < n; ++v) {
+                if (v == u || !shares_edge(u, v)) continue;
+                const auto vc = centroid(v);
+                const float tentative = g_score[u] + std::hypot(uc[0] - vc[0], uc[2] - vc[2]);
+                if (tentative < g_score[v]) {
+                    g_score[v] = tentative;
+                    parent[v] = u;
+                    const float h_est = std::hypot(vc[0] - g_center[0], vc[2] - g_center[2]);
+                    open.push({tentative + h_est, v});
+                }
+            }
+        }
+        if (parent[g_idx] == n) {
+            return {goal};
+        }
+        std::vector<Point3> rev_path;
+        rev_path.push_back(goal);
+        for (std::size_t cur = parent[g_idx]; cur != n && cur != s_idx; cur = parent[cur]) {
+            rev_path.push_back(centroid(cur));
+        }
+        std::reverse(rev_path.begin(), rev_path.end());
+        return rev_path;
+    }
+
     MoveResult MoveTo(float target_x, float target_y, float target_z, int max_steps) {
         auto& h = *host_;
         MoveResult result{};
         const float dt = 1.0f / 30.0f;
         int stalled_frames = 0;
+        const auto start_pos = h.players.Slots()[h.players.Leader()].position;
+        const auto waypoints = ComputeNavMeshWaypoints(start_pos, {target_x, target_y, target_z});
+        std::size_t wp_index = 0;
+
         for (int step = 0; step < std::max(1, max_steps); ++step) {
             AutoConfigureDialog();
             if (h.dialog && h.dialog->View().visible) {
@@ -567,15 +795,26 @@ public:
             }
             const auto leader = h.players.Leader();
             const auto pos = h.players.Slots()[leader].position;
-            const float dx = target_x - pos[0];
-            const float dz = target_z - pos[2];
+            while (wp_index + 1 < waypoints.size()) {
+                const float wdx = waypoints[wp_index][0] - pos[0];
+                const float wdz = waypoints[wp_index][2] - pos[2];
+                if (std::hypot(wdx, wdz) <= 6.0f) {
+                    ++wp_index;
+                } else {
+                    break;
+                }
+            }
+            const float cur_tx = waypoints[wp_index][0];
+            const float cur_tz = waypoints[wp_index][2];
+            const float dx = cur_tx - pos[0];
+            const float dz = cur_tz - pos[2];
             const float dist = std::sqrt(dx * dx + dz * dz);
-            if (dist <= 4.5f) {
+            if (wp_index + 1 == waypoints.size() && dist <= 4.5f) {
                 result.reached = true;
                 break;
             }
-            const float ux = dx / dist;
-            const float uz = dz / dist;
+            const float ux = dx / std::max(dist, 1e-4f);
+            const float uz = dz / std::max(dist, 1e-4f);
             const auto pose = h.game_camera->Pose();
             float rx = pose.right[0], rz = pose.right[2];
             float fx = pose.forward[0], fz = pose.forward[2];
@@ -908,6 +1147,101 @@ public:
     }
 
 private:
+    void AutoAdvanceCutsceneModals() {
+        auto& h = *host_;
+        if (h.game_media && h.game) {
+            while (const auto cmd = h.game_media->TakeCommand()) {
+                if (const auto done = h.game_media->Complete(cmd->generation, cmd->id, true)) {
+                    h.game->Complete(done->token);
+                }
+            }
+        }
+        if (h.sound_services) {
+            while (const auto cmd = h.sound_services->TakeCommand()) {
+                if (cmd->kind == SoundCommandKind::play) {
+                    (void)h.sound_services->Event(cmd->generation, cmd->handle, "end");
+                }
+            }
+        }
+        const auto tw = ChapterTextWindowView(h);
+        if (tw.visible) {
+            (void)CloseChapterTextWindow(h, tw.generation, tw.id);
+        }
+    }
+
+    void BindSharedCombatAndFallbackServices() {
+        auto& h = *host_;
+        if (!h.game_services) return;
+        h.game_services->add_combat_monster = [this](std::int32_t monster_id, std::int32_t slot) {
+            if (!combat_.active && !combat_.enemies.empty() &&
+                std::all_of(combat_.enemies.begin(), combat_.enemies.end(), [](const auto& e) { return e.hp <= 0; })) {
+                combat_.enemies.clear();
+            }
+            CombatEnemy unit;
+            unit.slot = slot;
+            unit.monster_id = monster_id;
+            if (monster_id == 2579) {
+                unit.name = "魁召(Boss)";
+                unit.hp = 600; unit.max_hp = 600; unit.attack = 85;
+            } else if (monster_id == 2610) {
+                unit.name = "槐妖长老(Boss)";
+                unit.hp = 900; unit.max_hp = 900; unit.attack = 110;
+            } else if (monster_id == 2611) {
+                unit.name = "女萝藤妖";
+                unit.hp = 360; unit.max_hp = 360; unit.attack = 65;
+            } else if (monster_id == 2999) {
+                unit.name = "玄霄(Final Boss)";
+                unit.hp = 1500; unit.max_hp = 1500; unit.attack = 145;
+            } else if (monster_id == 2998) {
+                unit.name = "夙瑶(Boss)";
+                unit.hp = 1000; unit.max_hp = 1000; unit.attack = 120;
+            } else {
+                unit.name = "妖魔(" + std::to_string(monster_id) + ")";
+                unit.hp = 450; unit.max_hp = 450; unit.attack = 60;
+            }
+            unit.health_state = 0;
+            combat_.enemies.push_back(std::move(unit));
+        };
+        h.game_services->config_combat_param = [this](bool unbreakable, std::int32_t round_limit, std::int32_t vip_monster, std::int32_t mode) {
+            combat_.param_words = {unbreakable ? 1 : 0, round_limit, vip_monster, mode};
+            combat_.vip_monster = vip_monster;
+        };
+        h.game_services->config_combat_bgm = [this](std::string_view bgm) { combat_.bgm = std::string(bgm); };
+        h.game_services->config_combat_camera = [this](std::string_view cam) { combat_.camera = std::string(cam); };
+        h.game_services->config_combat_ground_camera = [this](std::string_view cam) { combat_.ground_camera = std::string(cam); };
+        h.game_services->config_combat_vip_monster = [this](std::int32_t vip) { combat_.vip_monster = vip; };
+        h.game_services->start_combat = [this](const ScriptRequest& req) -> ScriptResponse {
+            combat_.active = true;
+            combat_.world = req.call.arguments.empty() ? "M01" : std::get<std::string>(req.call.arguments[0]);
+            combat_.round = 1;
+            combat_.wait_token = req.token;
+            combat_.last_log = "进入战斗！请使用 combat_action 指令进行战斗（action: attack/skill/item）。";
+            if (combat_.enemies.empty()) {
+                host_->game_services->add_combat_monster(2579, 1);
+            }
+            return {{}, true};
+        };
+        h.game_services->fallback = [](const ScriptRequest& req) -> ScriptResponse {
+            switch (req.call.system_id) {
+                case 61: case 62: case 63: case 64:
+                case 191: case 192: case 193:
+                    return {0.0f, false};
+                case 69: case 82: case 89: case 107: case 116:
+                case 131: case 133: case 163: case 190: case 198:
+                case 205: case 208: case 220: case 229: case 236:
+                case 287: case 288: case 289:
+                    return {std::int32_t(0), false};
+                case 125: case 154: case 155: case 156:
+                case 161: case 200: case 211:
+                    return {false, false};
+                case 194: case 195:
+                    return {std::string(""), false};
+                default:
+                    return {{}, false};
+            }
+        };
+    }
+
     void AutoConfigureDialog() {
         auto& h = *host_;
         if (h.dialog) {
@@ -1565,75 +1899,7 @@ private:
                 h.time_script->Terminate();
             }
         };
-        h.game_services->add_combat_monster = [this](std::int32_t monster_id, std::int32_t slot) {
-            if (!combat_.active && !combat_.enemies.empty() &&
-                std::all_of(combat_.enemies.begin(), combat_.enemies.end(), [](const auto& e) { return e.hp <= 0; })) {
-                combat_.enemies.clear();
-            }
-            CombatEnemy unit;
-            unit.slot = slot;
-            unit.monster_id = monster_id;
-            if (monster_id == 2579) {
-                unit.name = "魁召(Boss)";
-                unit.hp = 600;
-                unit.max_hp = 600;
-                unit.attack = 85;
-            } else if (monster_id == 2610) {
-                unit.name = "槐妖长老(Boss)";
-                unit.hp = 900;
-                unit.max_hp = 900;
-                unit.attack = 110;
-            } else if (monster_id == 2611) {
-                unit.name = "女萝藤妖";
-                unit.hp = 360;
-                unit.max_hp = 360;
-                unit.attack = 65;
-            } else if (monster_id == 2999) {
-                unit.name = "玄霄(Final Boss)";
-                unit.hp = 1500;
-                unit.max_hp = 1500;
-                unit.attack = 145;
-            } else if (monster_id == 2998) {
-                unit.name = "夙瑶(Boss)";
-                unit.hp = 1000;
-                unit.max_hp = 1000;
-                unit.attack = 120;
-            } else {
-                unit.name = "符灵";
-                unit.hp = 220;
-                unit.max_hp = 220;
-                unit.attack = 45;
-            }
-            unit.health_state = 0;
-            combat_.enemies.push_back(std::move(unit));
-        };
-        h.game_services->config_combat_param = [this](bool unbreakable, std::int32_t round_limit, std::int32_t vip_monster, std::int32_t mode) {
-            combat_.param_words = {unbreakable ? 1 : 0, round_limit, vip_monster, mode};
-            combat_.vip_monster = vip_monster;
-        };
-        h.game_services->config_combat_bgm = [this](std::string_view bgm) {
-            combat_.bgm = std::string(bgm);
-        };
-        h.game_services->config_combat_camera = [this](std::string_view cam) {
-            combat_.camera = std::string(cam);
-        };
-        h.game_services->config_combat_ground_camera = [this](std::string_view cam) {
-            combat_.ground_camera = std::string(cam);
-        };
-        h.game_services->config_combat_vip_monster = [this](std::int32_t vip) {
-            combat_.vip_monster = vip;
-        };
-        h.game_services->start_combat = [this](const ScriptRequest& req) -> ScriptResponse {
-            combat_.active = true;
-            combat_.world = req.call.arguments.empty() ? "M01" : std::get<std::string>(req.call.arguments[0]);
-            combat_.round = 1;
-            combat_.wait_token = req.token;
-            combat_.last_log = "进入战斗！请使用 combat_action 指令进行战斗（action: attack/skill/item）。";
-            if (combat_.enemies.empty()) {
-                host_->game_services->add_combat_monster(2579, 1);
-            }
-            return {{}, true};
-        };
+        BindSharedCombatAndFallbackServices();
         h.game_services->object_research = [&h](std::string_view name, bool enabled) {
             h.scene_objects->SetResearch(name, enabled);
         };
@@ -1937,9 +2203,12 @@ private:
     }
 
     std::string work_dir_;
+    std::string game_data_;
+    bool using_real_cpk_{false};
     std::string prev_world_;
     std::string prev_scene_;
     std::map<std::string, std::string> ui_files_;
+    std::map<std::string, EngineCheckpoint> checkpoints_;
     std::unique_ptr<ChapterHost> host_;
     CombatFormulaCatalog formulas_ = BuildSyntheticFormulaCatalog();
     pal4::RandomNumberGenerator rng_;
@@ -1959,6 +2228,16 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
     if (cmd == "reset") {
         engine.Reset();
         return engine.ObserveJson("reset");
+    }
+    if (cmd == "save_checkpoint") {
+        const auto slot = ExtractJsonString(line, "slot").value_or("default");
+        const bool ok = engine.SaveCheckpoint(slot);
+        return engine.ObserveJson(ok ? "checkpoint_saved:" + slot : "checkpoint_save_failed");
+    }
+    if (cmd == "load_checkpoint") {
+        const auto slot = ExtractJsonString(line, "slot").value_or("default");
+        const bool ok = engine.LoadCheckpoint(slot);
+        return engine.ObserveJson(ok ? "checkpoint_loaded:" + slot : "checkpoint_load_failed");
     }
     if (cmd == "step") {
         const int frames = static_cast<int>(ExtractJsonNumber(line, "frames").value_or(1));
@@ -2001,7 +2280,10 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
 extern "C" {
 
 void agent_pal4_init(const char* work_dir) {
-    GlobalEngine() = std::make_unique<AgentPal4Engine>(work_dir && *work_dir ? work_dir : "/tmp/agent-pal4-work");
+    const char* env_game_data = std::getenv("AGENT_PAL4_GAME_DATA");
+    GlobalEngine() = std::make_unique<AgentPal4Engine>(
+        work_dir && *work_dir ? work_dir : "/tmp/agent-pal4-work",
+        env_game_data ? env_game_data : "");
 }
 
 const char* agent_pal4_rpc(const char* json_line) {
@@ -2022,16 +2304,20 @@ const char* agent_pal4_rpc(const char* json_line) {
 int main(int argc, char** argv) {
     try {
         std::string work_dir = "/tmp/agent-pal4-work";
+        const char* env_game_data = std::getenv("AGENT_PAL4_GAME_DATA");
+        std::string game_data = env_game_data ? env_game_data : "";
         bool self_test = false;
         for (int i = 1; i < argc; ++i) {
             std::string_view arg(argv[i]);
             if (arg == "--work-dir" && i + 1 < argc) {
                 work_dir = argv[++i];
+            } else if (arg == "--game-data" && i + 1 < argc) {
+                game_data = argv[++i];
             } else if (arg == "--self-test") {
                 self_test = true;
             }
         }
-        agent_pal4_init(work_dir.c_str());
+        GlobalEngine() = std::make_unique<AgentPal4Engine>(work_dir, game_data);
         if (self_test) {
             std::cout << agent_pal4_rpc(R"({"cmd":"observe"})") << "\n";
             return 0;

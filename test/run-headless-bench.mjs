@@ -217,6 +217,9 @@ async function runBenchmark() {
     console.log(`[PASS] 14. 铸造【羲和剑】并进入终章卷云台 (giPayMoney + giCheckPackProperty): 望舒羲和双剑齐备, 切入场景=${sceneM20.title} (${sceneM20.world}/${sceneM20.scene})`);
 
     // Step 15: Defeat Final Bosses Xuan Xiao & Su Yao (玄霄 & 夙瑶) in M20/1
+    const savedBeforeFinal = await client.send({ cmd: 'save_checkpoint', slot: 'before_xuanxiao' });
+    assert.equal(savedBeforeFinal.event, 'checkpoint_saved:before_xuanxiao');
+
     const moveXuanXiao = await client.send({ cmd: 'move_to', x: 0, y: 0, z: -10, max_steps: 120 });
     let battleM20 = await client.send({ cmd: 'interact' });
     assert.equal(battleM20.combat.active, true);
@@ -239,8 +242,21 @@ async function runBenchmark() {
     assert.equal(gameDone.game_cleared, true);
     console.log(`[PASS] 16. 百年之后青鸾峰重逢大结局通关 (GrandEndingPortal): quest_stage=${gameDone.quest_stage}, game_cleared=${gameDone.game_cleared}`);
 
+    // Step 17: Verify sub-millisecond in-memory checkpoint restore (save_checkpoint / load_checkpoint)
+    const savedEnding = await client.send({ cmd: 'save_checkpoint', slot: 'ending_cleared' });
+    assert.equal(savedEnding.event, 'checkpoint_saved:ending_cleared');
+    const restoredPreBoss = await client.send({ cmd: 'load_checkpoint', slot: 'before_xuanxiao' });
+    assert.equal(restoredPreBoss.event, 'checkpoint_loaded:before_xuanxiao');
+    assert.equal(restoredPreBoss.quest_stage, 710);
+    assert.equal(restoredPreBoss.game_cleared, false);
+    const restoredEnding = await client.send({ cmd: 'load_checkpoint', slot: 'ending_cleared' });
+    assert.equal(restoredEnding.event, 'checkpoint_loaded:ending_cleared');
+    assert.equal(restoredEnding.quest_stage, 1000);
+    assert.equal(restoredEnding.game_cleared, true);
+    console.log(`[PASS] 17. 内存级秒级快照存档与读档恢复 (save_checkpoint / load_checkpoint): 终局前(mvar=${restoredPreBoss.quest_stage}) <-> 大结局(mvar=${restoredEnding.quest_stage}) 无损切换`);
+
     console.log('================================================================');
-    console.log('  ALL 16 HEADLESS AGENT-PAL4 FULL-CAMPAIGN CHECKS PASSED (100%)');
+    console.log('  ALL 17 HEADLESS AGENT-PAL4 FULL-CAMPAIGN CHECKS PASSED (100%)');
     console.log('================================================================');
   } finally {
     client.close();

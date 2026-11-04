@@ -13,12 +13,15 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 const HOST_BIN = process.env.AGENT_PAL4_HOST_BIN || path.join(ROOT_DIR, 'build', 'agent-pal4-host');
+const GAME_DATA = process.env.AGENT_PAL4_GAME_DATA || '';
 const AGY_BIN = process.env.BENCH_AGY_BIN || path.join(os.homedir(), '.local', 'bin', 'agy');
 const MODEL = process.env.BENCH_MODEL || 'gemini-4-argon-medium';
 
 class HostBridge {
-  constructor(binPath, workDir) {
-    this.proc = spawn(binPath, ['--work-dir', workDir], {
+  constructor(binPath, workDir, gameData) {
+    const args = ['--work-dir', workDir];
+    if (gameData) args.push('--game-data', gameData);
+    this.proc = spawn(binPath, args, {
       stdio: ['pipe', 'pipe', 'inherit'],
     });
     this.rl = readline.createInterface({ input: this.proc.stdout });
@@ -97,6 +100,28 @@ const TOOLS = [
       required: ['action'],
     },
   },
+  {
+    name: 'save_checkpoint',
+    description: 'Save an instant in-memory checkpoint of the current scene, party, inventory, and story globals.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slot: { type: 'string', description: 'Checkpoint slot name (e.g. "ch1")' },
+      },
+      required: ['slot'],
+    },
+  },
+  {
+    name: 'load_checkpoint',
+    description: 'Restore a previously saved in-memory checkpoint by slot name.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slot: { type: 'string', description: 'Checkpoint slot name (e.g. "ch1")' },
+      },
+      required: ['slot'],
+    },
+  },
 ];
 
 async function main() {
@@ -112,7 +137,7 @@ async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pal4-argon-'));
   fs.mkdirSync(outDir, { recursive: true });
 
-  const host = new HostBridge(HOST_BIN, path.join(tmpDir, 'host-work'));
+  const host = new HostBridge(HOST_BIN, path.join(tmpDir, 'host-work'), GAME_DATA);
   const initialObs = await host.rpc({ cmd: 'observe' });
 
   const traceFile = path.join(outDir, 'episode.jsonl');
