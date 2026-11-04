@@ -704,11 +704,38 @@ public:
                     }
                 }
             }
+            if (!target_pos && h.scene_events && h.arena) {
+                const auto states = h.scene_events->States();
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    if (states[i].name == target && i < h.arena->event_collisions.size() && h.arena->event_collisions[i]) {
+                        Point3 ev_pos{0.f, 0.f, 0.f};
+                        std::size_t pt_count = 0;
+                        for (const auto& atomic : h.arena->event_collisions[i]->atomics) {
+                            for (const auto& tri : atomic.triangles) {
+                                for (const auto& p : tri.points) {
+                                    ev_pos[0] += p[0];
+                                    ev_pos[1] += p[1];
+                                    ev_pos[2] += p[2];
+                                    ++pt_count;
+                                }
+                            }
+                        }
+                        if (pt_count > 0) {
+                            target_pos = Point3{
+                                ev_pos[0] / static_cast<float>(pt_count),
+                                ev_pos[1] / static_cast<float>(pt_count),
+                                ev_pos[2] / static_cast<float>(pt_count),
+                            };
+                        }
+                        break;
+                    }
+                }
+            }
             if (target_pos) {
                 const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
                 const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
-                if (dist > 11.0f) {
-                    (void)MoveTo((*target_pos)[0], (*target_pos)[1], (*target_pos)[2], 200);
+                if (dist > 1.5f) {
+                    (void)MoveTo((*target_pos)[0], (*target_pos)[1], (*target_pos)[2], 220);
                 }
             }
         }
@@ -841,12 +868,52 @@ public:
         const float dt = 1.0f / 30.0f;
         int stalled_frames = 0;
         const auto start_pos = h.players.Slots()[h.players.Leader()].position;
+        if (h.scene_events && h.arena) {
+            const auto states = h.scene_events->States();
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                if (!states[i].active || i >= h.arena->event_collisions.size() || !h.arena->event_collisions[i]) continue;
+                Point3 ev_pos{0.f, 0.f, 0.f};
+                std::size_t pt_count = 0;
+                for (const auto& atomic : h.arena->event_collisions[i]->atomics) {
+                    for (const auto& tri : atomic.triangles) {
+                        for (const auto& p : tri.points) {
+                            ev_pos[0] += p[0];
+                            ev_pos[1] += p[1];
+                            ev_pos[2] += p[2];
+                            ++pt_count;
+                        }
+                    }
+                }
+                if (pt_count > 0) {
+                    ev_pos[0] /= static_cast<float>(pt_count);
+                    ev_pos[2] /= static_cast<float>(pt_count);
+                    if (std::hypot(target_x - ev_pos[0], target_z - ev_pos[2]) <= 3.0f) {
+                        const float vx = ev_pos[0] - start_pos[0];
+                        const float vz = ev_pos[2] - start_pos[2];
+                        const float vlen = std::hypot(vx, vz);
+                        if (vlen > 1e-3f) {
+                            target_x = ev_pos[0] + (vx / vlen) * 5.5f;
+                            target_z = ev_pos[2] + (vz / vlen) * 5.5f;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
         const auto waypoints = ComputeNavMeshWaypoints(start_pos, {target_x, target_y, target_z});
         std::size_t wp_index = 0;
+
+        const std::string start_world = h.arena ? h.arena->description.world : "";
+        const std::string start_scene = h.arena ? h.arena->description.scene : "";
 
         for (int step = 0; step < std::max(1, max_steps); ++step) {
             AutoConfigureDialog();
             if (h.dialog && h.dialog->View().visible) {
+                result.reached = true;
+                break;
+            }
+            if (h.arena && (h.arena->description.world != start_world || h.arena->description.scene != start_scene)) {
+                result.reached = true;
                 break;
             }
             const auto leader = h.players.Leader();
@@ -865,7 +932,7 @@ public:
             const float dx = cur_tx - pos[0];
             const float dz = cur_tz - pos[2];
             const float dist = std::sqrt(dx * dx + dz * dz);
-            if (wp_index + 1 == waypoints.size() && dist <= 4.5f) {
+            if (wp_index + 1 == waypoints.size() && dist <= 4.2f) {
                 result.reached = true;
                 break;
             }
@@ -885,9 +952,14 @@ public:
 
             const auto after = h.players.Slots()[leader].position;
             const float moved = std::hypot(after[0] - pos[0], after[2] - pos[2]);
-            if (step > 18 && moved < 0.05f) {
+            if (step > 12 && moved < 0.05f) {
                 if (++stalled_frames >= 6) {
-                    result.blocked = true;
+                    const float rem = std::hypot(target_x - after[0], target_z - after[2]);
+                    if (rem <= 6.5f) {
+                        result.reached = true;
+                    } else {
+                        result.blocked = true;
+                    }
                     break;
                 }
             } else {
@@ -901,7 +973,7 @@ public:
         result.distance_remaining = std::hypot(
             target_x - result.final_position[0],
             target_z - result.final_position[2]);
-        if (result.distance_remaining <= 4.5f) result.reached = true;
+        if (result.distance_remaining <= 4.5f && !result.blocked) result.reached = true;
         return result;
     }
 
@@ -1060,9 +1132,9 @@ public:
         out << "\"title\":\"" << EscapeJson(h.arena ? h.arena->description.title : "") << "\",";
         if (!pure_mode_) {
             out << "\"quest_stage\":" << h.game_globals[0] << ",";
+            out << "\"trial_cleared\":" << (h.game_globals[0] >= 200 ? "true" : "false") << ",";
+            out << "\"chapter1_cleared\":" << (h.game_globals[0] >= 300 ? "true" : "false") << ",";
         }
-        out << "\"trial_cleared\":" << (h.game_globals[0] >= 200 ? "true" : "false") << ",";
-        out << "\"chapter1_cleared\":" << (h.game_globals[0] >= 300 ? "true" : "false") << ",";
         out << "\"game_cleared\":" << (h.game_globals[0] >= 1000 ? "true" : "false") << ",";
 
         out << "\"leader\":{";
@@ -1090,7 +1162,16 @@ public:
                 << ",\"rage\":" << slot.progress.rage
                 << ",\"favor_to_tianhe\":" << slot.favor[0]
                 << ",\"skills_count\":" << slot.skills.size()
-                << ",\"physical_attack\":" << slot.progress.effective.core[3] << "}";
+                << ",\"physical_attack\":" << slot.progress.effective.core[3]
+                << ",\"equipment\":[";
+            bool first_eq = true;
+            for (const auto eq_id : slot.equipment) {
+                if (eq_id == 0) continue;
+                if (!first_eq) out << ",";
+                first_eq = false;
+                out << eq_id;
+            }
+            out << "]}";
         }
         out << "],";
 
@@ -1102,6 +1183,15 @@ public:
                 << "\"text\":\"" << EscapeJson(v.display_text) << "\"";
         } else {
             out << "\"visible\":false,\"id\":0,\"text\":\"\"";
+        }
+        out << "},";
+
+        out << "\"hint\":{";
+        if (h.interaction_hints && h.interaction_hints->View().visible) {
+            const auto& hv = h.interaction_hints->View();
+            out << "\"visible\":true,\"text\":\"" << EscapeJson(hv.text) << "\"";
+        } else {
+            out << "\"visible\":false,\"text\":\"\"";
         }
         out << "},";
 
@@ -1199,6 +1289,21 @@ public:
                     out << ",\"script\":\"" << EscapeJson(ev.script) << "\"";
                 }
                 out << "}";
+            }
+        }
+        out << "],";
+
+        out << "\"monsters\":[";
+        if (h.arena) {
+            const auto& mons = h.arena->catalog.monsters;
+            for (std::size_t i = 0; i < mons.size(); ++i) {
+                if (i > 0) out << ",";
+                const auto& m = mons[i];
+                const float dist = std::hypot(m.position[0] - pos[0], m.position[2] - pos[2]);
+                out << "{\"name\":\"" << EscapeJson(m.name) << "\""
+                    << ",\"resource\":\"" << EscapeJson(m.resource) << "\""
+                    << ",\"position\":[" << m.position[0] << "," << m.position[1] << "," << m.position[2] << "]"
+                    << ",\"distance\":" << dist << "}";
             }
         }
         out << "],";

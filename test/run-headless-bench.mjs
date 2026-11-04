@@ -275,7 +275,7 @@ async function runBenchmark() {
     assert.equal(normalObs.events[0].script, 'TriggerGrandEnding');
     console.log(`[PASS] 18. 3D 传送门几何中心坐标 (.evf position=${JSON.stringify(normalObs.events[0].position)}) 与 Normal/Pure 双模式脱敏切换校验通过`);
 
-    // Step 19: Verify Normal-mode Play-and-Fix tools (warp_scene, set_quest_stage, wait, targeted interact)
+    // Step 19: Verify Normal-mode Play-and-Fix tools (warp_scene, set_quest_stage, wait, targeted interact) + Pure-mode exact portal traversal at z=-65
     const warped = await client.send({ cmd: 'warp_scene', world: 'Q02', scene: 'N01' });
     assert.equal(warped.world, 'Q02');
     assert.equal(warped.scene, 'N01');
@@ -285,7 +285,12 @@ async function runBenchmark() {
     assert.equal(waited.event, 'stepped');
     const targetInteract = await client.send({ cmd: 'interact', target: 'LiuMengli' });
     assert.equal(targetInteract.dialog.visible, true);
-    console.log(`[PASS] 19. Normal 模式调试与定向交互工具集 (warp_scene + set_quest_stage + wait + interact(target="LiuMengli")) 校验通过`);
+    await client.send({ cmd: 'interact' });
+    // Now walk directly to events[0].position (0, 5, -65) WITHOUT needing z=-68 overshoot
+    const portalWalk = await client.send({ cmd: 'move_to', x: 0, y: 0, z: -65, max_steps: 200 });
+    assert.equal(portalWalk.dialog.visible, true);
+    assert.equal(portalWalk.quest_stage, 400);
+    console.log(`[PASS] 19. Normal/Pure 模式增强校验: 定向交互 interact(target="LiuMengli") + 精确传送门中心触发 move_to(0,0,-65) 通过`);
 
     console.log('================================================================');
     console.log('  ALL 19 HEADLESS AGENT-PAL4 FULL-CAMPAIGN CHECKS PASSED (100%)');

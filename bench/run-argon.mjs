@@ -286,9 +286,9 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
   const pureGuide = [
     `You are playing Chinese Paladin 4 (仙剑奇侠传四 - OpenPAL4 C++20 Headless Runtime) in PURE (Zero-Prior / Zero-Walkthrough) mode.`,
     `No external walkthrough, quest stage IDs, or internal script function names are exposed. You must explore and clear the game purely from in-game observations:`,
-    `- Inspect \`npcs\`, \`objects\` (chests/altars/forges), and \`events\` (trigger volumes with 3D \`position\`) in each scene.`,
-    `- Read \`dialog.text\` carefully when talking to NPCs or interacting with objects—characters will tell you what needs to be done before advancing (e.g., retrieving items, recruiting companions, switching the party leader, or defeating bosses).`,
-    `- Note that moving onto an event trigger volume (\`events[i].position\`) may require stepping slightly beyond its center (e.g., \`z - 3\`) to intersect the trigger box, and always call \`interact\` whenever \`dialog.visible\` is true.`,
+    `- Inspect \`npcs\`, \`objects\` (chests/altars/forges), \`monsters\`, and \`events\` (trigger volumes/portals with 3D \`position\`) in each scene.`,
+    `- Read \`dialog.text\` and \`hint.text\` carefully when talking to NPCs or interacting with objects—characters will tell you what needs to be done before advancing (e.g., retrieving items, recruiting companions, switching the party leader, or defeating bosses).`,
+    `- You can walk into a portal/trigger volume using \`move_to\` with its \`events[i].position\` coordinates (or \`interact\` with \`{"target": "<event_name>"}\`), and always call \`interact\` whenever \`dialog.visible\` is true.`,
     `- When \`combat.active\` is true, use \`combat_action\` to defeat all enemies.`,
   ];
 
