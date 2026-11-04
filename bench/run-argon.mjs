@@ -17,9 +17,19 @@ const GAME_DATA = process.env.AGENT_PAL4_GAME_DATA || '';
 const AGY_BIN = process.env.BENCH_AGY_BIN || path.join(os.homedir(), '.local', 'bin', 'agy');
 const MODEL = process.env.BENCH_MODEL || 'gemini-4-argon-medium';
 
+function parseCliMode() {
+  const idx = process.argv.indexOf('--mode');
+  if (idx >= 0 && process.argv[idx + 1]) {
+    return process.argv[idx + 1].toLowerCase() === 'pure' ? 'pure' : 'normal';
+  }
+  return (process.env.BENCH_MODE || 'normal').toLowerCase() === 'pure' ? 'pure' : 'normal';
+}
+
+const MODE = parseCliMode();
+
 class HostBridge {
-  constructor(binPath, workDir, gameData) {
-    const args = ['--work-dir', workDir];
+  constructor(binPath, workDir, gameData, mode) {
+    const args = ['--work-dir', workDir, '--mode', mode];
     if (gameData) args.push('--game-data', gameData);
     this.proc = spawn(binPath, args, {
       stdio: ['pipe', 'pipe', 'inherit'],
@@ -137,14 +147,14 @@ async function main() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pal4-argon-'));
   fs.mkdirSync(outDir, { recursive: true });
 
-  const host = new HostBridge(HOST_BIN, path.join(tmpDir, 'host-work'), GAME_DATA);
+  const host = new HostBridge(HOST_BIN, path.join(tmpDir, 'host-work'), GAME_DATA, MODE);
   const initialObs = await host.rpc({ cmd: 'observe' });
 
   const traceFile = path.join(outDir, 'episode.jsonl');
   const clientLogFile = path.join(outDir, 'client.jsonl');
   const resultFile = path.join(outDir, 'result.json');
   const traceStream = fs.createWriteStream(traceFile, { flags: 'a' });
-  traceStream.write(JSON.stringify({ type: 'start', timestamp: new Date().toISOString(), model: `agy-cli:${MODEL}`, initial: initialObs }) + '\n');
+  traceStream.write(JSON.stringify({ type: 'start', timestamp: new Date().toISOString(), model: `agy-cli:${MODEL}`, mode: MODE, initial: initialObs }) + '\n');
 
   let toolCalls = 0;
   let clearedState = null;
@@ -220,15 +230,28 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
       )}'\`: ${t.description}`
   ).join('\n');
 
-  const prompt = [
-    `You are playing Chinese Paladin 4 (仙剑奇侠传四 - OpenPAL4 C++20 Headless Runtime) across the full 4-Chapter, 7-Scene campaign from Stone Sunken Cave to the Grand Finale at Qionghua's Juanyun Platform:`,
+  const normalGuide = [
+    `You are playing Chinese Paladin 4 (仙剑奇侠传四 - OpenPAL4 C++20 Headless Runtime) in NORMAL (Play-and-Fix) mode across the full 4-Chapter, 7-Scene campaign from Stone Sunken Cave to the Grand Finale at Qionghua's Juanyun Platform:`,
     `1. Chapter 1 - Scene Q01/N01 (青鸾峰·石沉溪洞): Talk to Han Lingsha at (35, 0, 0), open AncestralBowChest at (-40, 0, 25), switch leader to Han Lingsha (index=1), walk to the south cave portal (0, 0, -68), and confirm the dialog to load M01/1.`,
     `2. Chapter 1 - Scene M01/1 (石沉溪洞·符灵大厅): Walk to Boss KuiZhao (魁召) at (0, 0, -10), interact to trigger combat, use \`combat_action\` (\`{"action": "skill", "target_slot": 1}\`) until \`combat.active\` becomes false, confirm dialog, then walk to the south portal (0, 0, -68) and confirm dialog to load M01/2.`,
     `3. Chapter 1 - Scene M01/2 (石沉溪洞·冰封墓室): Interact with WangshuSwordAltar at (0, 0, 0) to obtain & equip 【望舒剑】, confirm dialog, then walk to the south exit (0, 0, -68) and confirm dialog to enter Chapter 2 (Q02/N01).`,
     `4. Chapter 2 - Scene Q02/N01 (寿阳城·柳府前庭): Walk to LiuMengli (柳梦璃) at (25, 0, 0), interact & confirm dialog to recruit her into the party, then walk to the south portal (0, 0, -68) and confirm dialog to enter M04/1.`,
     `5. Chapter 2 - Scene M04/1 (女萝岩·底层大殿): Walk to Boss HuaiYaoElder (槐妖长老) at (0, 0, -10), interact to start combat, use \`combat_action\` (\`{"action": "skill", "target_slot": 1}\`) until \`combat.active\` is false, confirm dialog to obtain 【土灵珠】, then walk to the south portal (0, 0, -68) and confirm dialog to ascend to Chapter 3 (Q07/N01).`,
     `6. Chapter 3 - Scene Q07/N01 (昆仑琼华派·剑舞坪): Walk to MurongZiying (慕容紫英) at (-30, 0, 0), interact & confirm dialog so all 4 heroes are in the party. Then walk to ChengtianSwordForge at (35, 0, 20), interact & confirm dialog to forge 【羲和剑】. Finally walk to the south portal (0, 0, -68) and confirm dialog to enter Chapter 4 (M20/1).`,
-    `7. Chapter 4 - Scene M20/1 (琼华飞升·卷云台决战): Walk to Final Bosses XuanXiao & SuYao (玄霄 & 夙瑶) at (0, 0, -10), interact to start the final boss battle, use \`combat_action\` (\`{"action": "skill", "target_slot": 0}\`) until \`combat.active\` is false, confirm dialog, and walk to GrandEndingPortal at (0, 0, -68) (confirming any dialog) until \`"game_cleared": true\` (\`"quest_stage": 1000\`).`,
+    `7. Chapter 4 - Scene M20/1 (琼华飞升·卷云台决战): Walk to Final Bosses XuanXiao & SuYao (玄霄 & 夙瑶) at (0, 0, -10), interact to start the final boss battle, use \`combat_action\` (\`{"action": "skill", "target_slot": 0}\`) until \`combat.active\` is false, confirm dialog, and walk to GrandEndingPortal at (0, 0, -68) (confirming any dialog) until \`"game_cleared": true\`.`,
+  ];
+
+  const pureGuide = [
+    `You are playing Chinese Paladin 4 (仙剑奇侠传四 - OpenPAL4 C++20 Headless Runtime) in PURE (Zero-Prior / Zero-Walkthrough) mode.`,
+    `No external walkthrough, quest stage IDs, or internal script function names are exposed. You must explore and clear the game purely from in-game observations:`,
+    `- Inspect \`npcs\`, \`objects\` (chests/altars/forges), and \`events\` (trigger volumes with 3D \`position\`) in each scene.`,
+    `- Read \`dialog.text\` carefully when talking to NPCs or interacting with objects—characters will tell you what needs to be done before advancing (e.g., retrieving items, recruiting companions, switching the party leader, or defeating bosses).`,
+    `- Note that moving onto an event trigger volume (\`events[i].position\`) may require stepping slightly beyond its center (e.g., \`z - 3\`) to intersect the trigger box, and always call \`interact\` whenever \`dialog.visible\` is true.`,
+    `- When \`combat.active\` is true, use \`combat_action\` to defeat all enemies.`,
+  ];
+
+  const prompt = [
+    ...(MODE === 'pure' ? pureGuide : normalGuide),
     ``,
     `### Tool Execution Interface`,
     `Call game tools ONLY by executing \`node ${helperFile} <tool_name> '<json_args>'\` via your shell/command tool. Do NOT read or access any files outside \`${tmpDir}\`.`,
@@ -240,11 +263,11 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
     JSON.stringify(initialObs, null, 2),
     '```',
     ``,
-    `Play until \`"game_cleared": true\` (\`"quest_stage": 1000\`) is returned, then summarize your full 4-chapter playthrough in 3-4 sentences.`,
+    `Play until \`"game_cleared": true\` is returned, then summarize your playthrough in 3-4 sentences.`,
   ].join('\n');
 
   console.log('================================================================');
-  console.log(`  Launching agy-cli:${MODEL} on OpenPAL4 Full 4-Chapter Campaign (Q01 -> M01 -> Q02 -> M04 -> Q07 -> M20)`);
+  console.log(`  Launching agy-cli:${MODEL} [mode=${MODE}] on OpenPAL4 Campaign`);
   console.log(`  Output Directory: ${outDir}`);
   console.log('================================================================');
 
@@ -296,6 +319,7 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
   const summary = {
     ok: Boolean(clearedState || finalObs.game_cleared),
     model: `agy-cli:${MODEL}`,
+    mode: MODE,
     toolCalls,
     agentTurns: finalResult?.num_turns ?? agentTurns,
     durationMs,

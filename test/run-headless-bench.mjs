@@ -255,8 +255,25 @@ async function runBenchmark() {
     assert.equal(restoredEnding.game_cleared, true);
     console.log(`[PASS] 17. 内存级秒级快照存档与读档恢复 (save_checkpoint / load_checkpoint): 终局前(mvar=${restoredPreBoss.quest_stage}) <-> 大结局(mvar=${restoredEnding.quest_stage}) 无损切换`);
 
+    // Step 18: Verify .evf 3D centroid position & Normal vs Pure mode information masking
+    assert.ok(Array.isArray(restoredEnding.events) && restoredEnding.events.length >= 1);
+    assert.deepEqual(restoredEnding.events[0].position, [0, 5, -65]);
+    assert.equal(restoredEnding.events[0].script, 'TriggerGrandEnding');
+
+    const pureObs = await client.send({ cmd: 'set_mode', mode: 'pure' });
+    assert.equal(pureObs.mode, 'pure');
+    assert.equal('quest_stage' in pureObs, false);
+    assert.equal('script' in pureObs.events[0], false);
+    assert.deepEqual(pureObs.events[0].position, [0, 5, -65]);
+
+    const normalObs = await client.send({ cmd: 'set_mode', mode: 'normal' });
+    assert.equal(normalObs.mode, 'normal');
+    assert.equal(normalObs.quest_stage, 1000);
+    assert.equal(normalObs.events[0].script, 'TriggerGrandEnding');
+    console.log(`[PASS] 18. 3D 传送门几何中心坐标 (.evf position=${JSON.stringify(normalObs.events[0].position)}) 与 Normal/Pure 双模式脱敏切换校验通过`);
+
     console.log('================================================================');
-    console.log('  ALL 17 HEADLESS AGENT-PAL4 FULL-CAMPAIGN CHECKS PASSED (100%)');
+    console.log('  ALL 18 HEADLESS AGENT-PAL4 FULL-CAMPAIGN CHECKS PASSED (100%)');
     console.log('================================================================');
   } finally {
     client.close();

@@ -476,14 +476,18 @@ public:
         std::uint32_t combat_rng_draws{};
     };
 
-    explicit AgentPal4Engine(std::string work_dir, std::string game_data = {})
+    explicit AgentPal4Engine(std::string work_dir, std::string game_data = {}, bool pure_mode = false)
         : work_dir_(std::move(work_dir)),
           game_data_(std::move(game_data)),
+          pure_mode_(pure_mode),
           formulas_(BuildSyntheticFormulaCatalog()) {
         std::filesystem::create_directories(work_dir_);
         rng_.Seed(20070801u);
         Reset();
     }
+
+    void SetPureMode(bool pure) { pure_mode_ = pure; }
+    bool PureMode() const { return pure_mode_; }
 
     void Reset() {
         combat_ = {};
@@ -998,10 +1002,13 @@ public:
             out << "\"event\":\"" << EscapeJson(extra_event) << "\",";
         }
         out << "\"frame\":" << h.scene_update_frames << ",";
+        out << "\"mode\":\"" << (pure_mode_ ? "pure" : "normal") << "\",";
         out << "\"world\":\"" << EscapeJson(h.arena ? h.arena->description.world : "") << "\",";
         out << "\"scene\":\"" << EscapeJson(h.arena ? h.arena->description.scene : "") << "\",";
         out << "\"title\":\"" << EscapeJson(h.arena ? h.arena->description.title : "") << "\",";
-        out << "\"quest_stage\":" << h.game_globals[0] << ",";
+        if (!pure_mode_) {
+            out << "\"quest_stage\":" << h.game_globals[0] << ",";
+        }
         out << "\"trial_cleared\":" << (h.game_globals[0] >= 200 ? "true" : "false") << ",";
         out << "\"chapter1_cleared\":" << (h.game_globals[0] >= 300 ? "true" : "false") << ",";
         out << "\"game_cleared\":" << (h.game_globals[0] >= 1000 ? "true" : "false") << ",";
@@ -1074,8 +1081,11 @@ public:
                 out << "{\"name\":\"" << EscapeJson(s.name) << "\""
                     << ",\"position\":[" << s.position[0] << "," << s.position[1] << "," << s.position[2] << "]"
                     << ",\"distance\":" << dist
-                    << ",\"interactable\":" << (h.scene_npcs->InteractionEnabled(i) ? "true" : "false")
-                    << ",\"script\":\"" << EscapeJson(h.scene_npcs->InteractionScript(i)) << "\"}";
+                    << ",\"interactable\":" << (h.scene_npcs->InteractionEnabled(i) ? "true" : "false");
+                if (!pure_mode_) {
+                    out << ",\"script\":\"" << EscapeJson(h.scene_npcs->InteractionScript(i)) << "\"";
+                }
+                out << "}";
             }
         }
         out << "],";
@@ -1092,8 +1102,11 @@ public:
                     << ",\"position\":[" << gob.position[0] << "," << gob.position[1] << "," << gob.position[2] << "]"
                     << ",\"distance\":" << dist
                     << ",\"research_able\":" << (h.scene_objects->InteractionEnabled(i) ? "true" : "false")
-                    << ",\"uses\":" << s.uses
-                    << ",\"script\":\"" << EscapeJson(gob.script) << "\"}";
+                    << ",\"uses\":" << s.uses;
+                if (!pure_mode_) {
+                    out << ",\"script\":\"" << EscapeJson(gob.script) << "\"";
+                }
+                out << "}";
             }
         }
         out << "],";
@@ -1105,10 +1118,35 @@ public:
                 if (i > 0) out << ",";
                 const auto& s = states[i];
                 const auto& ev = h.arena->catalog.events[i];
+                Point3 ev_pos{0.f, 0.f, 0.f};
+                std::size_t pt_count = 0;
+                if (i < h.arena->event_collisions.size() && h.arena->event_collisions[i]) {
+                    for (const auto& atomic : h.arena->event_collisions[i]->atomics) {
+                        for (const auto& tri : atomic.triangles) {
+                            for (const auto& p : tri.points) {
+                                ev_pos[0] += p[0];
+                                ev_pos[1] += p[1];
+                                ev_pos[2] += p[2];
+                                ++pt_count;
+                            }
+                        }
+                    }
+                }
+                if (pt_count > 0) {
+                    ev_pos[0] /= static_cast<float>(pt_count);
+                    ev_pos[1] /= static_cast<float>(pt_count);
+                    ev_pos[2] /= static_cast<float>(pt_count);
+                }
+                const float ev_dist = std::hypot(ev_pos[0] - pos[0], ev_pos[2] - pos[2]);
                 out << "{\"name\":\"" << EscapeJson(s.name) << "\""
                     << ",\"type\":" << s.type
                     << ",\"active\":" << (s.active ? "true" : "false")
-                    << ",\"script\":\"" << EscapeJson(ev.script) << "\"}";
+                    << ",\"position\":[" << ev_pos[0] << "," << ev_pos[1] << "," << ev_pos[2] << "]"
+                    << ",\"distance\":" << ev_dist;
+                if (!pure_mode_) {
+                    out << ",\"script\":\"" << EscapeJson(ev.script) << "\"";
+                }
+                out << "}";
             }
         }
         out << "],";
@@ -2205,6 +2243,7 @@ private:
     std::string work_dir_;
     std::string game_data_;
     bool using_real_cpk_{false};
+    bool pure_mode_{false};
     std::string prev_world_;
     std::string prev_scene_;
     std::map<std::string, std::string> ui_files_;
@@ -2228,6 +2267,11 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
     if (cmd == "reset") {
         engine.Reset();
         return engine.ObserveJson("reset");
+    }
+    if (cmd == "set_mode") {
+        const auto mode = ExtractJsonString(line, "mode").value_or("normal");
+        engine.SetPureMode(mode == "pure");
+        return engine.ObserveJson("mode_set:" + mode);
     }
     if (cmd == "save_checkpoint") {
         const auto slot = ExtractJsonString(line, "slot").value_or("default");
@@ -2306,6 +2350,8 @@ int main(int argc, char** argv) {
         std::string work_dir = "/tmp/agent-pal4-work";
         const char* env_game_data = std::getenv("AGENT_PAL4_GAME_DATA");
         std::string game_data = env_game_data ? env_game_data : "";
+        const char* env_mode = std::getenv("AGENT_PAL4_MODE");
+        bool pure_mode = env_mode && std::string_view(env_mode) == "pure";
         bool self_test = false;
         for (int i = 1; i < argc; ++i) {
             std::string_view arg(argv[i]);
@@ -2313,11 +2359,13 @@ int main(int argc, char** argv) {
                 work_dir = argv[++i];
             } else if (arg == "--game-data" && i + 1 < argc) {
                 game_data = argv[++i];
+            } else if (arg == "--mode" && i + 1 < argc) {
+                pure_mode = (std::string_view(argv[++i]) == "pure");
             } else if (arg == "--self-test") {
                 self_test = true;
             }
         }
-        GlobalEngine() = std::make_unique<AgentPal4Engine>(work_dir, game_data);
+        GlobalEngine() = std::make_unique<AgentPal4Engine>(work_dir, game_data, pure_mode);
         if (self_test) {
             std::cout << agent_pal4_rpc(R"({"cmd":"observe"})") << "\n";
             return 0;
