@@ -1,5 +1,9 @@
 #include "pal4/portable/chapter_host.h"
 #include "pal4/portable/collision_surface.h"
+#include "pal4/portable/csb.h"
+#include "pal4/portable/game_path.h"
+#include "pal4/portable/gbk.h"
+#include "pal4/portable/package.h"
 #include "pal4/portable/battle_state.h"
 #include "pal4/portable/combat_formula_catalog.h"
 #include "pal4/portable/combat_numeric_damage_action.h"
@@ -12,12 +16,14 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <optional>
 #include <queue>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -615,7 +621,6 @@ public:
             }
             AutoAdvanceCutsceneModals();
             AutoConfigureDialog();
-            RenderHeadlessFrame();
             return;
         }
         ProcessPendingArenaLoad();
@@ -650,7 +655,6 @@ public:
         }
         ProcessPendingArenaLoad();
         AutoConfigureDialog();
-        RenderHeadlessFrame();
     }
 
     void StepFrames(int frames, float move_x, float move_y, float cam_yaw, bool confirm) {
@@ -670,14 +674,15 @@ public:
         SetChapterInteractionInput(h, false);
     }
 
-    void AdvanceUntilInteractive(int max_frames = 600) {
+    void AdvanceUntilInteractive(int max_frames = 2400) {
         auto& h = *host_;
         for (int i = 0; i < max_frames; ++i) {
             AutoConfigureDialog();
             if (combat_.active) break;
             if (h.dialog && h.dialog->View().visible) break;
             if (h.controller.State().enabled &&
-                (!h.game || h.game->State() == ScriptState::idle || h.game->State() == ScriptState::finished)) {
+                (!h.game || h.game->State() == ScriptState::idle ||
+                 (h.game->State() == ScriptState::finished && h.game->Depth() <= 1))) {
                 break;
             }
             if (h.game && h.game->State() == ScriptState::failed) break;
@@ -703,7 +708,7 @@ public:
                 return "confirmed_dialog:" + text_before;
             }
             std::string transcript;
-            for (int lines = 0; lines < 60 && h.dialog && h.dialog->View().visible; ++lines) {
+            for (int lines = 0; lines < 250 && h.dialog && h.dialog->View().visible; ++lines) {
                 const auto view = h.dialog->View();
                 if (!transcript.empty()) transcript += " | ";
                 transcript += view.display_text;
@@ -712,11 +717,13 @@ public:
                     h.dialog->Confirm(view.generation, view.id);
                 }
                 AdvanceHostFrame(1.0f / 30.0f);
-                AdvanceUntilInteractive(600);
+                AdvanceUntilInteractive(2400);
                 if (h.controller.State().enabled || combat_.active) break;
             }
             return "confirmed_dialog:" + transcript;
         }
+        const std::string before_w = h.arena ? h.arena->description.world : "";
+        const std::string before_s = h.arena ? h.arena->description.scene : "";
         if (!target.empty()) {
             std::optional<Point3> target_pos;
             if (h.scene_npcs) {
@@ -730,24 +737,35 @@ public:
             if (!target_pos && h.scene_objects && h.arena) {
                 const auto states = h.scene_objects->States();
                 for (std::size_t i = 0; i < states.size(); ++i) {
-                    if (states[i].name == target) {
+                    const bool match_script = !pure_mode_ && i < h.arena->catalog.gobs.size() && h.arena->catalog.gobs[i].script == target;
+                    if (match_script ||
+                        (states[i].name == target &&
+                         (h.scene_objects->InteractionEnabled(i) ||
+                          (i < h.arena->catalog.gobs.size() && !h.arena->catalog.gobs[i].script.empty())))) {
                         target_pos = h.arena->catalog.gobs[i].position;
                         break;
+                    }
+                }
+                if (!target_pos) {
+                    for (std::size_t i = 0; i < states.size(); ++i) {
+                        if (states[i].name == target) {
+                            target_pos = h.arena->catalog.gobs[i].position;
+                            break;
+                        }
                     }
                 }
             }
             if (!target_pos && h.scene_events && h.arena) {
                 const auto states = h.scene_events->States();
                 for (std::size_t i = 0; i < states.size(); ++i) {
-                    if (states[i].name == target) {
+                    if (states[i].name == target ||
+                        (!pure_mode_ && i < h.arena->catalog.events.size() && h.arena->catalog.events[i].script == target)) {
                         target_pos = EventTriggerPoint(i);
                         break;
                     }
                 }
             }
             if (target_pos) {
-                const std::string before_w = h.arena ? h.arena->description.world : "";
-                const std::string before_s = h.arena ? h.arena->description.scene : "";
                 const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
                 const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
                 if (dist > 1.5f) {
@@ -763,10 +781,68 @@ public:
             }
         }
         SetChapterInteractionInput(h, false);
+        AdvanceHostFrame(1.0f / 30.0f);
         SetChapterInteractionInput(h, true);
         AdvanceHostFrame(1.0f / 30.0f);
         SetChapterInteractionInput(h, false);
         AdvanceHostFrame(1.0f / 30.0f);
+        if (!target.empty() && h.arena &&
+            h.arena->description.world == before_w &&
+            h.arena->description.scene == before_s &&
+            (!h.dialog || !h.dialog->View().visible) &&
+            !combat_.active &&
+            (!h.game || (h.game->State() != ScriptState::prepared &&
+                         h.game->State() != ScriptState::suspended &&
+                         !(h.game->State() == ScriptState::finished && h.game->Depth() > 1)))) {
+            bool dispatched = false;
+            if (h.scene_objects && h.event_scripts && h.arena) {
+                const auto states = h.scene_objects->States();
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    const bool match_script = !pure_mode_ && i < h.arena->catalog.gobs.size() && h.arena->catalog.gobs[i].script == target;
+                    if (states[i].name == target || match_script) {
+                        if (h.scene_objects->InteractionEnabled(i)) {
+                            dispatched = h.scene_objects->Interact(i, *h.event_scripts);
+                        }
+                        if (!dispatched && i < h.arena->catalog.gobs.size() && !h.arena->catalog.gobs[i].script.empty()) {
+                            h.event_scripts->LoadWorld(h.arena->description.world);
+                            dispatched = (h.event_scripts->Push(h.arena->description.world, "void " + h.arena->catalog.gobs[i].script + "()") == 0);
+                        }
+                        if (dispatched) break;
+                    }
+                }
+            }
+            if (!dispatched && h.scene_events && h.arena) {
+                const auto states = h.scene_events->States();
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    const bool match_script = !pure_mode_ && i < h.arena->catalog.events.size() && h.arena->catalog.events[i].script == target;
+                    if ((states[i].name == target || match_script) && states[i].active) {
+                        if (states[i].type == 5) {
+                            dispatched = h.scene_events->TriggerInteraction(i);
+                        } else if (states[i].type == 1 && !h.arena->catalog.events[i].script.empty() && h.event_scripts) {
+                            h.event_scripts->LoadWorld(h.arena->description.world);
+                            dispatched = (h.event_scripts->Push(h.arena->description.world, "void " + h.arena->catalog.events[i].script + "()") == 0);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (!dispatched && h.scene_npcs && h.event_scripts && h.arena) {
+                const auto states = h.scene_npcs->States();
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    if (states[i].name == target && h.scene_npcs->InteractionEnabled(i)) {
+                        const auto script = h.scene_npcs->InteractionScript(i);
+                        if (!script.empty()) {
+                            h.event_scripts->LoadWorld(h.arena->description.world);
+                            dispatched = (h.event_scripts->Push(h.arena->description.world, "void " + std::string(script) + "()") == 0);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (dispatched) {
+                AdvanceHostFrame(1.0f / 30.0f);
+            }
+        }
         if (using_real_cpk_) {
             AdvanceUntilInteractive(600);
         }
@@ -796,7 +872,14 @@ public:
         }
         ScriptCall call;
         call.system_id = 65;
-        call.arguments = {std::string(world), std::string(scene), std::string(""), false};
+        std::string base_scene(scene);
+        std::string resource_scene;
+        if (world == "M06" && scene.size() == 2 && std::isdigit(static_cast<unsigned char>(scene[0])) &&
+            std::isalpha(static_cast<unsigned char>(scene[1]))) {
+            base_scene = std::string(scene.substr(0, 1));
+            resource_scene = std::string(scene);
+        }
+        call.arguments = {std::string(world), base_scene, resource_scene, false};
         (void)h.game_arena->Invoke(ScriptRequest{ScriptToken{999999, 1}, call});
         AdvanceArenaLoad(h);
         AdvanceUntilInteractive(600);
@@ -806,6 +889,115 @@ public:
 
     void SetQuestStage(std::int32_t stage) {
         host_->game_globals[0] = stage;
+    }
+
+    std::string InspectCsb(std::string_view world, std::string_view fn_filter = {}) const {
+        if (pure_mode_) {
+            return "{\"ok\":false,\"error\":\"inspect_csb disabled in pure mode\"}";
+        }
+        std::ifstream input(ResolveOriginalPath(std::filesystem::path(host_->game_data) / "script.cpk"), std::ios::binary);
+        if (!input) {
+            return "{\"ok\":false,\"error\":\"cannot open script.cpk\"}";
+        }
+        PackageReader pkg(input);
+        const auto bytes = pkg.Read(std::string(world) + ".csb");
+        const auto mod = ReadCsb(bytes);
+        std::ostringstream out;
+        out << "{\"ok\":true,\"world\":\"" << EscapeJson(world) << "\""
+            << ",\"global_slots\":" << mod.global_slots
+            << ",\"globals_count\":" << mod.globals.size()
+            << ",\"structures_count\":" << mod.structures.size()
+            << ",\"imports_count\":" << mod.imports.size()
+            << ",\"globals\":[";
+        for (std::size_t i = 0; i < mod.globals.size(); ++i) {
+            if (i > 0) out << ",";
+            out << "{\"name\":\"" << EscapeJson(mod.globals[i].name)
+                << "\",\"index\":" << mod.globals[i].index
+                << ",\"token\":" << mod.globals[i].type.token << "}";
+        }
+        out << "],\"init_ins\":[";
+        for (std::size_t i = 0; i < mod.initialize.instructions.size(); ++i) {
+            if (i > 0) out << ",";
+            out << "{\"op\":" << static_cast<int>(mod.initialize.instructions[i].opcode)
+                << ",\"arg\":" << std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(mod.initialize.instructions[i].operand)) << "}";
+        }
+        out << "],\"opcodes_used\":[";
+        {
+            std::set<int> ops;
+            for (const auto& fn : mod.functions) {
+                for (const auto& ins : fn.instructions) ops.insert(ins.opcode);
+            }
+            bool fop = true;
+            for (int op : ops) { if (!fop) out << ","; fop = false; out << op; }
+        }
+        out << "],\"functions\":[";
+        bool first_fn = true;
+        for (const auto& fn : mod.functions) {
+            if (!fn_filter.empty() && fn.name != fn_filter) continue;
+            if (!first_fn) out << ",";
+            first_fn = false;
+            std::set<std::int32_t> mvar_checks;
+            std::set<std::int32_t> mvar_writes;
+            std::vector<std::string> global_ops;
+            std::vector<std::string> calls;
+            std::vector<std::string> strings;
+            std::vector<std::int32_t> syscalls;
+            const auto& ins = fn.instructions;
+            for (std::size_t k = 0; k < ins.size(); ++k) {
+                const auto u = static_cast<std::uint32_t>(ins[k].operand);
+                const auto s = std::bit_cast<std::int32_t>(u);
+                if (ins[k].opcode == 99 && s == -1 && k + 1 < ins.size() &&
+                    (ins[k + 1].opcode == 95 || ins[k + 1].opcode == 96)) {
+                    mvar_checks.insert(std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(ins[k + 1].operand)));
+                }
+                if (ins[k].opcode == 2 && k + 1 < ins.size() && ins[k + 1].opcode == 100) {
+                    const auto gs = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(ins[k + 1].operand));
+                    if (gs == -1) {
+                        mvar_writes.insert(s);
+                    } else if (gs < -1) {
+                        global_ops.push_back("W[" + std::to_string(-gs - 1) + "]=" + std::to_string(s));
+                    }
+                } else if (ins[k].opcode == 99 && s < -1) {
+                    global_ops.push_back("R[" + std::to_string(-s - 1) + "]");
+                }
+                if (ins[k].opcode == 12 && (u & 65535) < mod.functions.size()) {
+                    calls.push_back(mod.functions[u & 65535].name);
+                }
+                if (ins[k].opcode == 90 && (u & 65535) < mod.strings.size()) {
+                    if (strings.size() < (fn_filter.empty() ? 8u : 64u)) {
+                        strings.push_back(DecodeGbk(mod.strings[u & 65535]));
+                    }
+                }
+                if (ins[k].opcode == 97 && s < 0) {
+                    syscalls.push_back(-s);
+                }
+            }
+            out << "{\"name\":\"" << EscapeJson(fn.name) << "\",\"mvar_checks\":[";
+            bool f = true;
+            for (auto v : mvar_checks) { if (!f) out << ","; f = false; out << v; }
+            out << "],\"mvar_writes\":[";
+            f = true;
+            for (auto v : mvar_writes) { if (!f) out << ","; f = false; out << v; }
+            out << "],\"global_ops\":[";
+            f = true;
+            for (const auto& g : global_ops) { if (!f) out << ","; f = false; out << "\"" << EscapeJson(g) << "\""; }
+            out << "],\"calls\":[";
+            f = true;
+            for (const auto& c : calls) { if (!f) out << ","; f = false; out << "\"" << EscapeJson(c) << "\""; }
+            out << "],\"strings\":[";
+            f = true;
+            for (const auto& st : strings) { if (!f) out << ","; f = false; out << "\"" << EscapeJson(st) << "\""; }
+            out << "]";
+            if (!fn_filter.empty()) {
+                out << ",\"syscalls\":[";
+                f = true;
+                for (auto sc : syscalls) { if (!f) out << ","; f = false; out << sc; }
+                out << "]";
+            }
+            out << "}";
+        }
+        out << "]}";
+        return out.str();
     }
 
     struct MoveResult {
@@ -1199,6 +1391,7 @@ public:
 
     std::string ObserveJson(std::string_view extra_event = {}) {
         AutoConfigureDialog();
+        RenderHeadlessFrame();
         auto& h = *host_;
         const auto leader_idx = h.players.Leader();
         const auto& leader = h.players.Slots()[leader_idx];
@@ -1542,8 +1735,8 @@ private:
                 }
                 return {{}, false};
             }
-            if (req.call.system_id == 274) {
-                if (host_->scene_npcs && req.call.arguments.size() == 4) {
+            if (req.call.system_id == 271 || req.call.system_id == 274) {
+                if (host_->scene_npcs && req.call.arguments.size() >= 4) {
                     const auto& npc_name = std::get<std::string>(req.call.arguments[0]);
                     const Point3 pos{
                         std::get<float>(req.call.arguments[1]),
@@ -1573,17 +1766,72 @@ private:
                 }
                 return {{}, false};
             }
+            if (req.call.system_id == 259 || req.call.system_id == 260) {
+                if (req.call.arguments.size() >= 3) {
+                    host_->players.SetPosition(
+                        host_->players.Leader(),
+                        {std::get<float>(req.call.arguments[0]),
+                         std::get<float>(req.call.arguments[1]),
+                         std::get<float>(req.call.arguments[2])});
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 279) {
+                if (host_->scene_npcs && !req.call.arguments.empty()) {
+                    host_->scene_npcs->SetVisible(std::get<std::string>(req.call.arguments[0]), false);
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 280) {
+                if (host_->scene_npcs && !req.call.arguments.empty()) {
+                    host_->scene_npcs->SetVisible(std::get<std::string>(req.call.arguments[0]), true);
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 302) {
+                if (host_->scene_objects && !req.call.arguments.empty()) {
+                    host_->scene_objects->SetVisible(std::get<std::string>(req.call.arguments[0]), false);
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 303) {
+                if (host_->scene_objects && !req.call.arguments.empty()) {
+                    host_->scene_objects->SetVisible(std::get<std::string>(req.call.arguments[0]), true);
+                }
+                return {{}, false};
+            }
             if (req.call.system_id == 161) {
                 return {true, false};
             }
-            if (req.call.system_id == 80 || req.call.system_id == 121 ||
-                req.call.system_id == 128 || req.call.system_id == 136 ||
-                req.call.system_id == 137 || req.call.system_id == 139 ||
-                req.call.system_id == 141 || req.call.system_id == 158 ||
+            if (req.call.system_id == 163) {
+                return {std::int32_t(0), false};
+            }
+            if (req.call.system_id == 72 || req.call.system_id == 73 ||
+                req.call.system_id == 80 || req.call.system_id == 86 ||
+                req.call.system_id == 87 || req.call.system_id == 102 ||
+                req.call.system_id == 121 || req.call.system_id == 128 ||
+                req.call.system_id == 136 || req.call.system_id == 137 ||
+                req.call.system_id == 139 || req.call.system_id == 140 ||
+                req.call.system_id == 141 ||
+                req.call.system_id == 144 || req.call.system_id == 158 ||
+                req.call.system_id == 159 || req.call.system_id == 162 ||
                 req.call.system_id == 164 || req.call.system_id == 166 ||
+                req.call.system_id == 168 || req.call.system_id == 170 ||
                 req.call.system_id == 174 || req.call.system_id == 175 ||
-                req.call.system_id == 181 || req.call.system_id == 252 ||
-                req.call.system_id == 279 || req.call.system_id == 314) {
+                req.call.system_id == 181 || req.call.system_id == 182 ||
+                req.call.system_id == 186 || req.call.system_id == 187 ||
+                req.call.system_id == 188 || req.call.system_id == 189 ||
+                req.call.system_id == 196 || req.call.system_id == 206 ||
+                req.call.system_id == 214 || req.call.system_id == 247 ||
+                req.call.system_id == 248 ||
+                req.call.system_id == 252 || req.call.system_id == 254 ||
+                req.call.system_id == 256 || req.call.system_id == 261 ||
+                req.call.system_id == 262 ||
+                req.call.system_id == 277 || req.call.system_id == 278 ||
+                req.call.system_id == 281 || req.call.system_id == 285 ||
+                req.call.system_id == 286 || req.call.system_id == 307 ||
+                req.call.system_id == 308 || req.call.system_id == 312 ||
+                req.call.system_id == 314) {
                 return {{}, false};
             }
             if (unhandled_calls_.size() < 64) {
@@ -2646,6 +2894,11 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         const auto stage = static_cast<std::int32_t>(ExtractJsonNumber(line, "quest_stage").value_or(0));
         engine.SetQuestStage(stage);
         return engine.ObserveJson("quest_stage_set");
+    }
+    if (cmd == "inspect_csb") {
+        const auto world = ExtractJsonString(line, "world").value_or("Q01");
+        const auto fn = ExtractJsonString(line, "function").value_or("");
+        return engine.InspectCsb(world, fn);
     }
     if (cmd == "switch_leader") {
         const int index = static_cast<int>(ExtractJsonNumber(line, "index").value_or(0));
