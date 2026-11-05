@@ -147,6 +147,28 @@ const TOOLS = [
       required: ['slot'],
     },
   },
+  {
+    name: 'use_item',
+    description: 'Use a special adventure item from inventory, such as "EarthBall" (土灵珠) to teleport to a dungeon entrance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        item: { type: 'string', description: 'Item name, e.g. "EarthBall" or "土灵珠"' },
+      },
+      required: ['item'],
+    },
+  },
+  {
+    name: 'fly_to',
+    description: 'Use in-game Sword Flight (御剑江湖 via WorldMap.csb, available once unlocked in Chapter 4) to fly to a world map destination.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        destination: { type: 'string', description: 'Destination world ID on the World Map (e.g. "Q06", "M11", "Q09", "M14", "M03", "Q08", "M15", "M17", "Q01", "Q05", "M19")' },
+      },
+      required: ['destination'],
+    },
+  },
   ...(MODE === 'normal'
     ? [
         {

@@ -498,6 +498,8 @@ public:
     void Reset() {
         combat_ = {};
         unhandled_calls_.clear();
+        world_map_states_.clear();
+        world_map_unlocked_ = false;
         prev_world_.clear();
         prev_scene_.clear();
         rng_.Seed(20070801u);
@@ -819,14 +821,15 @@ public:
                 const auto states = h.scene_events->States();
                 for (std::size_t i = 0; i < states.size(); ++i) {
                     const bool match_script = !pure_mode_ && i < h.arena->catalog.events.size() && h.arena->catalog.events[i].script == target;
-                    if ((states[i].name == target || match_script) && states[i].active) {
-                        if (states[i].type == 5) {
+                    if (states[i].name == target || match_script) {
+                        if (states[i].type == 5 && states[i].active) {
                             dispatched = h.scene_events->TriggerInteraction(i);
-                        } else if (states[i].type == 1 && !h.arena->catalog.events[i].script.empty() && h.event_scripts) {
+                        }
+                        if (!dispatched && i < h.arena->catalog.events.size() && !h.arena->catalog.events[i].script.empty() && h.event_scripts) {
                             h.event_scripts->LoadWorld(h.arena->description.world);
                             dispatched = (h.event_scripts->Push(h.arena->description.world, "void " + h.arena->catalog.events[i].script + "()") == 0);
                         }
-                        break;
+                        if (dispatched) break;
                     }
                 }
             }
@@ -834,13 +837,13 @@ public:
                 const auto states = h.scene_npcs->States();
                 for (std::size_t i = 0; i < states.size(); ++i) {
                     const bool match_script = !pure_mode_ && h.scene_npcs->InteractionScript(i) == target;
-                    if ((states[i].name == target || match_script) && h.scene_npcs->InteractionEnabled(i)) {
+                    if (states[i].name == target || match_script) {
                         const auto script = h.scene_npcs->InteractionScript(i);
                         if (!script.empty()) {
                             h.event_scripts->LoadWorld(h.arena->description.world);
                             dispatched = (h.event_scripts->Push(h.arena->description.world, "void " + std::string(script) + "()") == 0);
                         }
-                        break;
+                        if (dispatched) break;
                     }
                 }
             }
@@ -859,6 +862,63 @@ public:
             return "opened_dialog:" + h.dialog->View().display_text;
         }
         return "interaction_dispatched";
+    }
+
+    std::string UseItem(std::string_view item) {
+        auto& h = *host_;
+        if (item == "EarthBall" || item == "土灵珠" || item == "6119") {
+            if (h.event_scripts && h.arena) {
+                while (h.dialog && h.dialog->View().visible) {
+                    const auto v = h.dialog->View();
+                    h.dialog->Confirm(v.generation, v.id);
+                    h.dialog->Advance(0.1f);
+                    (void)h.dialog->TakeCompletion();
+                }
+                h.event_scripts->LoadWorld(h.arena->description.world);
+                if (h.event_scripts->Push(h.arena->description.world, "void EarthBall()") == 0) {
+                    AdvanceHostFrame(1.0f / 30.0f);
+                    if (using_real_cpk_) {
+                        AdvanceUntilInteractive(1200);
+                    }
+                    RenderHeadlessFrame();
+                    return "used_item:EarthBall";
+                }
+            }
+            return "use_item_unavailable:EarthBall";
+        }
+        return "use_item_unsupported:" + std::string(item);
+    }
+
+    std::string FlyTo(std::string_view destination) {
+        auto& h = *host_;
+        if (destination.empty()) return "fly_invalid_destination";
+        if (!using_real_cpk_) {
+            return WarpScene(destination, "1") ? ("flew_to:" + std::string(destination)) : "fly_failed";
+        }
+        if (!h.event_scripts || !h.game) return "fly_unavailable";
+        if (h.game_globals[0] < 70500 && !world_map_unlocked_) {
+            return "fly_locked";
+        }
+        while (h.dialog && h.dialog->View().visible) {
+            const auto v = h.dialog->View();
+            h.dialog->Confirm(v.generation, v.id);
+            h.dialog->Advance(0.1f);
+            (void)h.dialog->TakeCompletion();
+        }
+        h.event_scripts->LoadWorld("WorldMap");
+        if (h.event_scripts->Push("WorldMap", "void init()") == 0) {
+            AdvanceHostFrame(1.0f / 30.0f);
+            while (h.game->State() == ScriptState::finished && h.game->Depth() > 0) {
+                h.game->PopFinished();
+            }
+        }
+        if (h.event_scripts->Push("WorldMap", "void " + std::string(destination) + "()") != 0) {
+            return "fly_invalid_destination:" + std::string(destination);
+        }
+        AdvanceHostFrame(1.0f / 30.0f);
+        AdvanceUntilInteractive(1200);
+        RenderHeadlessFrame();
+        return "flew_to:" + std::string(destination);
     }
 
     bool WarpScene(std::string_view world, std::string_view scene) {
@@ -1659,7 +1719,25 @@ public:
         out << "\"draw_calls\":" << gles.draw_calls << ",";
         out << "\"triangles\":" << gles.triangles_submitted << ",";
         out << "\"buffers\":" << gles.buffers_uploaded;
-        out << "}";
+        out << "},";
+        const bool sword_flight = (h.game_globals[0] >= 70500 || world_map_unlocked_);
+        out << "\"world_map\":{\"unlocked\":" << (sword_flight ? "true" : "false") << ",\"destinations\":[";
+        if (sword_flight) {
+            constexpr const char* kAllDests[] = {
+                "Q01", "Q02", "Q03", "Q04", "Q05", "Q06", "Q07", "Q08", "Q09", "Q10", "Q13",
+                "M02", "M03", "M05", "M09", "M11", "M13", "M14", "M15", "M17", "M19"
+            };
+            bool first_dest = true;
+            for (const char* d : kAllDests) {
+                auto it = world_map_states_.find(d);
+                if (world_map_states_.empty() || (it != world_map_states_.end() && it->second >= 1)) {
+                    if (!first_dest) out << ",";
+                    first_dest = false;
+                    out << "\"" << d << "\"";
+                }
+            }
+        }
+        out << "]}";
         if (!pure_mode_) {
             const char* state_str = "idle";
             const char* wait_str = "none";
@@ -1863,7 +1941,19 @@ private:
                 }
                 return {{}, false};
             }
-            if (req.call.system_id == 161) {
+            if (req.call.system_id == 130) {
+                if (req.call.arguments.size() >= 2) {
+                    const auto& loc = std::get<std::string>(req.call.arguments[0]);
+                    const auto st = std::get<std::int32_t>(req.call.arguments[1]);
+                    world_map_states_[loc] = st;
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 310) {
+                world_map_unlocked_ = true;
+                return {{}, false};
+            }
+            if (req.call.system_id == 154 || req.call.system_id == 161) {
                 return {true, false};
             }
             if (req.call.system_id == 131 || req.call.system_id == 198 ||
@@ -2892,9 +2982,11 @@ private:
     std::string game_data_;
     bool using_real_cpk_{false};
     bool pure_mode_{false};
+    bool world_map_unlocked_{false};
     float time_scale_{3.0f};
     std::string prev_world_;
     std::string prev_scene_;
+    std::map<std::string, std::int32_t> world_map_states_;
     std::map<std::string, std::string> ui_files_;
     std::map<std::string, EngineCheckpoint> checkpoints_;
     std::vector<std::string> unhandled_calls_;
@@ -2956,13 +3048,32 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         const std::string tag = engine.Interact(target);
         return engine.ObserveJson(tag);
     }
+    if (cmd == "use_item") {
+        const auto item = ExtractJsonString(line, "item").value_or(
+            ExtractJsonString(line, "target").value_or("EarthBall"));
+        const std::string tag = engine.UseItem(item);
+        return engine.ObserveJson(tag);
+    }
+    if (cmd == "fly_to") {
+        const auto dest = ExtractJsonString(line, "destination").value_or(
+            ExtractJsonString(line, "world").value_or(
+                ExtractJsonString(line, "target").value_or("")));
+        const std::string tag = engine.FlyTo(dest);
+        return engine.ObserveJson(tag);
+    }
     if (cmd == "warp_scene") {
+        if (engine.PureMode()) {
+            return "{\"ok\":false,\"error\":\"warp_scene disabled in pure mode; use scene portals, use_item(EarthBall), or fly_to(destination)\"}";
+        }
         const auto world = ExtractJsonString(line, "world").value_or("");
         const auto scene = ExtractJsonString(line, "scene").value_or("");
         const bool ok = engine.WarpScene(world, scene);
         return engine.ObserveJson(ok ? "warped:" + world + "/" + scene : "warp_failed");
     }
     if (cmd == "set_quest_stage") {
+        if (engine.PureMode()) {
+            return "{\"ok\":false,\"error\":\"set_quest_stage disabled in pure mode\"}";
+        }
         const auto stage = static_cast<std::int32_t>(
             ExtractJsonNumber(line, "quest_stage").value_or(
                 ExtractJsonNumber(line, "stage").value_or(0)));
