@@ -14,11 +14,13 @@ Static HTML Leaderboard: [`bench/out/board.html`](bench/out/board.html) (also mi
 
 | Rank | Model | Mode | Campaign Scope | Progress | Tool Calls | Bosses / Max Lv | Tokens | Duration | Replay Verification |
 | :-: | :--- | :-: | :--- | :-: | :-: | :-: | :-: | :-: | :-: |
-| 🥇 1 | `agy-cli:gemini-4-argon-medium` ([`argon-20261105T032438`](bench/out/argon-20261105T032438/result.json)) | **`pure`** | **Full 4-Chapter Campaign (Act I–IV)** | **100%** | **36** | 3/3 · Lv.50 | 89.3k | 159.6s | `已核验 ✓` (`724fad874ef1`) |
-| 🥈 2 | `agy-cli:claude-opus-5-5-high` ([`opus-20261105T041624`](bench/out/opus-20261105T041624/result.json)) | **`pure`** | **Full 4-Chapter Campaign (Act I–IV)** | **100%** | **44** | 3/3 · Lv.50 | 69.6k | **107.4s** | `已核验 ✓` (`e2b54a1cae43`) |
-| 🥉 3 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T204552`](bench/out/argon-20261103T204552/result.json)) | `normal` | **Full 4-Chapter Campaign (Act I–IV)** | **100%** | **48** | 3/3 · Lv.50 | 58.9k | 131.1s | `已核验 ✓` (`7903cba5ebc1`) |
-| 4 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T201924`](bench/out/argon-20261103T201924/result.json)) | `normal` | Chapter 1 Benchmark (Shichenxi Cave) | 50% | 22 | 1/1 · Lv.1 | 27.2k | 51.9s | `已核验 ✓` (`5680d5c70bad`) |
-| 5 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T194927`](bench/out/argon-20261103T194927/result.json)) | `normal` | Opening Trial Benchmark (Qingluan Peak) | 25% | 9 | 0/0 · Lv.1 | 35.0k | 74.5s | `已核验 ✓` (`ef4b25ab482c`) |
+| 🥇 1 | `agy-cli:claude-opus-5-5-high` ([`opus-20261105T061222`](bench/out/opus-20261105T061222/result.json)) | **`pure` (Real CPK)** | **Retail `.cpk` Full 4-Chapter Campaign (24 Stages · Act I–IV)** | **100%** | **253** | 18/18 · Lv.53 | 77.0k | **260.8s** | `已核验 ✓` (`316373dc5b52`) |
+| 🥈 2 | `agy-cli:gemini-4-argon-medium` ([`argon-20261105T052556`](bench/out/argon-20261105T052556/result.json)) | **`pure` (Real CPK)** | **Retail `.cpk` Full 4-Chapter Campaign (24 Stages · Act I–IV)** | **100%** | **296** | 18/18 · Lv.53 | 368.2k | 2605.7s | `已核验 ✓` (`80db7e8ccd9a`) |
+| 🥉 3 | `agy-cli:gemini-4-argon-medium` ([`argon-20261105T032438`](bench/out/argon-20261105T032438/result.json)) | **`pure`** | **7-Scene Synthetic Campaign (Act I–IV)** | **100%** | **36** | 3/3 · Lv.50 | 89.3k | 159.6s | `已核验 ✓` (`724fad874ef1`) |
+| 4 | `agy-cli:claude-opus-5-5-high` ([`opus-20261105T041624`](bench/out/opus-20261105T041624/result.json)) | **`pure`** | **7-Scene Synthetic Campaign (Act I–IV)** | **100%** | **44** | 3/3 · Lv.50 | 69.6k | **107.4s** | `已核验 ✓` (`e2b54a1cae43`) |
+| 5 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T204552`](bench/out/argon-20261103T204552/result.json)) | `normal` | **7-Scene Synthetic Campaign (Act I–IV)** | **100%** | **48** | 3/3 · Lv.50 | 58.9k | 131.1s | `已核验 ✓` (`7903cba5ebc1`) |
+| 6 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T201924`](bench/out/argon-20261103T201924/result.json)) | `normal` | Chapter 1 Benchmark (Shichenxi Cave) | 50% | 22 | 1/1 · Lv.1 | 27.2k | 51.9s | `已核验 ✓` (`5680d5c70bad`) |
+| 7 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T194927`](bench/out/argon-20261103T194927/result.json)) | `normal` | Opening Trial Benchmark (Qingluan Peak) | 25% | 9 | 0/0 · Lv.1 | 35.0k | 74.5s | `已核验 ✓` (`ef4b25ab482c`) |
 
 ### Retail `.cpk` Full 4-Chapter Campaign Verification (`mvar 10100 -> 170000`)
 

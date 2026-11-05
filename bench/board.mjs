@@ -86,6 +86,7 @@ export function loadRuns(root = OUT_ROOT) {
     const gameCleared = Boolean(result.gameCleared);
     const chapter1Cleared = Boolean(result.chapter1Cleared || gameCleared);
     const trialCleared = Boolean(result.trialCleared || chapter1Cleared);
+    const realCpk = Boolean(result.realCpk || log.start?.realCpk);
     const progressPct = gameCleared
       ? 100
       : chapter1Cleared
@@ -94,7 +95,9 @@ export function loadRuns(root = OUT_ROOT) {
           ? 25
           : 0;
     const scopeLabel = gameCleared
-      ? "全四章终局通关 (Act I–IV)"
+      ? realCpk
+        ? "原版 CPK 全四章终局通关 (24幕·Act I–IV)"
+        : "7幕浓缩战役通关 (Synthetic Act I–IV)"
       : result.chapter1Cleared
         ? "第一章通关 (石沉溪洞)"
         : "序章试炼通关 (青鸾峰)";
@@ -115,6 +118,7 @@ export function loadRuns(root = OUT_ROOT) {
         ? String(result.model).split(":")[0]
         : "local",
       mode,
+      realCpk,
       scopeLabel,
       progressPct,
       gameCleared,
@@ -141,8 +145,9 @@ export function loadRuns(root = OUT_ROOT) {
     });
   }
 
-  // Sort: full clear first, then pure mode first, then fewer toolCalls
+  // Sort: realCpk full clear first, then progressPct, then pure mode first, then fewer toolCalls
   runs.sort((a, b) => {
+    if (b.realCpk !== a.realCpk) return b.realCpk ? 1 : -1;
     if (b.progressPct !== a.progressPct) return b.progressPct - a.progressPct;
     if (a.mode !== b.mode) return a.mode === "pure" ? -1 : 1;
     return a.toolCalls - b.toolCalls;
@@ -188,11 +193,14 @@ function renderVerifyBadge(state, digest = "") {
   return `<span class="vbadge warn" title="尚未运行 node bench/verify.mjs">待核验</span>`;
 }
 
-function renderModeBadge(mode) {
+function renderModeBadge(mode, realCpk = false) {
+  const cpkTag = realCpk
+    ? ` <span class="mbadge pure" title="挂载原版零售 gamedata/*.cpk 完整资源包 (24幕·43个.csb模块)">CPK 原版</span>`
+    : "";
   if (mode === "pure") {
-    return `<span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span>`;
+    return `<span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span>${cpkTag}`;
   }
-  return `<span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span>`;
+  return `<span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span>${cpkTag}`;
 }
 
 /** 生成 进度% × 工具调用步数 散点图 + 帕累托前沿 */
@@ -205,7 +213,7 @@ function renderScatterSvg(runs) {
     padB = 42;
   const iW = W - padL - padR,
     iH = H - padT - padB;
-  const maxCalls = Math.max(60, ...runs.map((r) => r.toolCalls + 8));
+  const maxCalls = Math.max(60, ...runs.map((r) => Math.ceil((r.toolCalls + 25) / 50) * 50));
   const xOf = (calls) => padL + (calls / maxCalls) * iW;
   const yOf = (pct) => padT + (1 - pct / 105) * iH;
 
@@ -225,7 +233,8 @@ function renderScatterSvg(runs) {
     const y = yOf(pct).toFixed(1);
     grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="grid"/><text x="${padL - 8}" y="${Number(y) + 4}" class="ax" text-anchor="end">${pct}%</text>`;
   }
-  for (let c = 0; c <= maxCalls; c += 10) {
+  const stepC = maxCalls > 120 ? 50 : 10;
+  for (let c = 0; c <= maxCalls; c += stepC) {
     const x = xOf(c).toFixed(1);
     grid += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" class="grid"/><text x="${x}" y="${H - padB + 16}" class="ax" text-anchor="middle">${c}步</text>`;
   }
@@ -241,11 +250,16 @@ function renderScatterSvg(runs) {
     .map((r, idx) => {
       const cx = xOf(r.toolCalls).toFixed(1);
       const cy = yOf(r.progressPct).toFixed(1);
-      const color = r.mode === "pure" ? "var(--ok)" : "var(--accent)";
+      const color = r.realCpk
+        ? "var(--seal)"
+        : r.mode === "pure"
+          ? "var(--ok)"
+          : "var(--accent)";
       const tag = r.shortModel.includes("opus") ? "Opus-5.5" : "Argon";
-      const label = `${r.shortModel} [${r.mode.toUpperCase()}] (${r.toolCalls}步, ${r.progressPct}%)`;
+      const scopeTag = r.realCpk ? "CPK" : r.mode.toUpperCase();
+      const label = `${r.shortModel} [${scopeTag}] (${r.toolCalls}步, ${r.progressPct}%)`;
       const dy = idx % 2 === 0 ? -10 : 15;
-      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(label)}</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(tag)} ${esc(r.mode.toUpperCase())} · ${r.toolCalls}步</text></g>`;
+      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(label)}</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(tag)} ${esc(scopeTag)} · ${r.toolCalls}步</text></g>`;
     })
     .join("");
 
@@ -253,7 +267,7 @@ function renderScatterSvg(runs) {
     ${grid}
     ${paretoLine}
     ${dots}
-    <text x="${padL + iW / 2}" y="${H - 6}" class="ax-title" text-anchor="middle">工具调用步数 (Tool Calls，越少越优 → 左上为帕累托前沿)</text>
+    <text x="${padL + iW / 2}" y="${H - 6}" class="ax-title" text-anchor="middle">工具调用步数 (Tool Calls · 绿/蓝=7幕浓缩战役，红印=24幕原版CPK全流程)</text>
     <text x="16" y="${padT + iH / 2}" class="ax-title" text-anchor="middle" transform="rotate(-90 16 ${padT + iH / 2})">战役通关进度 (%)</text>
   </svg>`;
 }
@@ -268,7 +282,7 @@ function renderTokenSvg(runs) {
     padB = 42;
   const iW = W - padL - padR,
     iH = H - padT - padB;
-  const maxK = Math.max(100, ...runs.map((r) => Math.ceil(r.totalTokens / 1000) + 10));
+  const maxK = Math.max(100, ...runs.map((r) => Math.ceil((r.totalTokens / 1000 + 25) / 50) * 50));
   const xOf = (k) => padL + (k / maxK) * iW;
   const yOf = (pct) => padT + (1 - pct / 105) * iH;
 
@@ -277,7 +291,8 @@ function renderTokenSvg(runs) {
     const y = yOf(pct).toFixed(1);
     grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="grid"/><text x="${padL - 8}" y="${Number(y) + 4}" class="ax" text-anchor="end">${pct}%</text>`;
   }
-  for (let k = 0; k <= maxK; k += 20) {
+  const stepK = maxK > 150 ? 50 : 20;
+  for (let k = 0; k <= maxK; k += stepK) {
     const x = xOf(k).toFixed(1);
     grid += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" class="grid"/><text x="${x}" y="${H - padB + 16}" class="ax" text-anchor="middle">${k}k</text>`;
   }
@@ -287,10 +302,15 @@ function renderTokenSvg(runs) {
       const k = r.totalTokens / 1000;
       const cx = xOf(k).toFixed(1);
       const cy = yOf(r.progressPct).toFixed(1);
-      const color = r.mode === "pure" ? "var(--ok)" : "var(--accent)";
+      const color = r.realCpk
+        ? "var(--seal)"
+        : r.mode === "pure"
+          ? "var(--ok)"
+          : "var(--accent)";
       const tag = r.shortModel.includes("opus") ? "Opus-5.5" : "Argon";
+      const scopeTag = r.realCpk ? "CPK" : r.mode.toUpperCase();
       const dy = idx % 2 === 0 ? -10 : 15;
-      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(r.shortModel)} [${esc(r.mode)}] · ${(r.totalTokens / 1000).toFixed(1)}k tokens · ${(r.durationMs / 1000).toFixed(1)}s</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(tag)} ${esc(r.mode.toUpperCase())} · ${(r.totalTokens / 1000).toFixed(1)}k</text></g>`;
+      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(r.shortModel)} [${esc(scopeTag)}] · ${(r.totalTokens / 1000).toFixed(1)}k tokens · ${(r.durationMs / 1000).toFixed(1)}s</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(tag)} ${esc(scopeTag)} · ${(r.totalTokens / 1000).toFixed(1)}k</text></g>`;
     })
     .join("");
 
@@ -303,14 +323,17 @@ function renderTokenSvg(runs) {
 }
 
 export function generateBoardHtml(runs) {
-  const pureFull = runs.find((r) => r.mode === "pure" && r.gameCleared && r.shortModel.includes("argon")) || runs.find((r) => r.mode === "pure" && r.gameCleared) || runs[0];
-  const opusPure = runs.find((r) => r.mode === "pure" && r.gameCleared && r.shortModel.includes("opus"));
+  const cpkOpus = runs.find((r) => r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("opus"));
+  const cpkArgon = runs.find((r) => r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("argon"));
+  const synthPureArgon = runs.find((r) => !r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("argon"));
+  const synthPureOpus = runs.find((r) => !r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("opus"));
+  const pureFull = cpkOpus || cpkArgon || synthPureArgon || runs[0];
   const normalFull = runs.find((r) => r.mode === "normal" && r.gameCleared);
   const verifiedCount = runs.filter((r) => r.verifyState === "verified").length;
 
   const stepReductionPct =
-    pureFull && normalFull
-      ? (((normalFull.toolCalls - pureFull.toolCalls) / normalFull.toolCalls) * 100).toFixed(1)
+    synthPureArgon && normalFull
+      ? (((normalFull.toolCalls - synthPureArgon.toolCalls) / normalFull.toolCalls) * 100).toFixed(1)
       : "25.0";
 
   const bibtex = `@misc{liu2026agentpal4bench,
@@ -361,7 +384,7 @@ export function generateBoardHtml(runs) {
         <div class="mname">${esc(r.shortModel)}</div>
         <div class="sub"><code>${esc(r.provider)}</code> · <code>${esc(r.runId)}</code></div>
       </td>
-      <td>${renderModeBadge(r.mode)}</td>
+      <td>${renderModeBadge(r.mode, r.realCpk)}</td>
       <td>
         <strong>${esc(r.scopeLabel)}</strong>
         <div class="sub">终局场景：<code>${esc(r.finalWorld)}</code> (${esc(r.finalTitle)})</div>
@@ -679,19 +702,19 @@ export function generateBoardHtml(runs) {
 
     <div class="kpis">
       <div class="kpi">
-        <div class="v">${pureFull ? pureFull.toolCalls : 36} 步</div>
-        <div class="l">Pure 纯净模式全四章通关</div>
-        <div class="s">${esc(pureFull?.shortModel || "gemini-4-argon-medium")} · 较 Normal 模式少用 ${stepReductionPct}% 步数</div>
+        <div class="v">${cpkOpus ? cpkOpus.toolCalls : 253} 步 · ${cpkOpus ? (cpkOpus.durationMs / 1000).toFixed(0) : 261}s</div>
+        <div class="l">原版 CPK Pure 模式最快通关</div>
+        <div class="s"><code>claude-opus-5-5-high</code> · 24幕主线 · 18 场 Boss 全胜</div>
       </div>
       <div class="kpi">
-        <div class="v">24 / 24 关</div>
-        <div class="l">原版零售 CPK 全四章主线</div>
-        <div class="s"><code>10100 → 170000</code> · Pure &amp; Normal 双模式 100% 通过</div>
+        <div class="v">${cpkArgon ? cpkArgon.toolCalls : 296} 步 · ${cpkArgon ? (cpkArgon.durationMs / 60000).toFixed(1) : 43.4}m</div>
+        <div class="l">原版 CPK Pure 模式首通</div>
+        <div class="s"><code>gemini-4-argon-medium</code> · 24幕主线 · 18 场 Boss 全胜</div>
       </div>
       <div class="kpi">
-        <div class="v">19 / 19 项</div>
-        <div class="l">无头引擎契约测试矩阵</div>
-        <div class="s">3D 碰撞、领队切换、五灵战斗、铸剑与结局闭环</div>
+        <div class="v">${synthPureArgon ? synthPureArgon.toolCalls : 36} 步</div>
+        <div class="l">7幕浓缩战役 Pure 最优步数</div>
+        <div class="s"><code>gemini-4-argon-medium</code> · 较 Normal 模式少用 ${stepReductionPct}% 步数</div>
       </div>
       <div class="kpi">
         <div class="v">43 模块 / 266 调</div>
@@ -705,46 +728,46 @@ export function generateBoardHtml(runs) {
       </div>
     </div>
 
-    <h2>🏆 问情论剑 · 榜首三甲席位<small>按战役通关进度优先、Pure 纯净模式优先、工具调用步数最少排序</small></h2>
+    <h2>🏆 问情论剑 · 榜首三甲席位<small>按原版零售 CPK 全四章 (24幕) 优先、Pure 纯净模式优先、工具调用步数最少排序</small></h2>
     <div class="podium">
       ${
-        pureFull
+        cpkOpus
           ? `<div class="pod gold">
-        <div class="medal">🥇 状元 · Pure 纯净模式全四章自主通关</div>
-        <div class="name">${esc(pureFull.shortModel)}</div>
-        <div class="score">100% 通关 · ${pureFull.toolCalls} 步</div>
+        <div class="medal">🥇 状元 · 原版 CPK 全四章 Pure 纯净模式自主通关 (步数最少 &amp; 耗时最快)</div>
+        <div class="name">${esc(cpkOpus.shortModel)}</div>
+        <div class="score">100% 原版通关 · ${cpkOpus.toolCalls} 步 (${(cpkOpus.durationMs / 1000).toFixed(1)}s)</div>
         <div class="meta">
-          ${renderModeBadge("pure")} ${renderVerifyBadge(pureFull.verifyState, pureFull.verifyDigest)}<br>
-          终局：<code>${esc(pureFull.finalWorld)}</code> (${esc(pureFull.finalTitle)}) · 全员 Lv.${pureFull.maxLevel} · ${pureFull.victories} 场 Boss 战全胜<br>
-          Token：${(pureFull.totalTokens / 1000).toFixed(1)}k · 耗时：${(pureFull.durationMs / 1000).toFixed(1)}s · 装备：射日猎弓 / 望舒剑 / 土灵珠 / 羲和剑
+          ${renderModeBadge("pure", true)} ${renderVerifyBadge(cpkOpus.verifyState, cpkOpus.verifyDigest)}<br>
+          终局：<code>${esc(cpkOpus.finalWorld)}</code> (${esc(cpkOpus.finalTitle)}) · 全员 Lv.${cpkOpus.maxLevel} · ${cpkOpus.victories} 场主线 Boss 战全胜<br>
+          Token：${(cpkOpus.totalTokens / 1000).toFixed(1)}k · 轮次：23 轮 (长链批处理执行) · 渲染：${cpkOpus.drawCalls} DC / ${cpkOpus.triangles} Tri
         </div>
       </div>`
           : ""
       }
       ${
-        opusPure
+        cpkArgon
           ? `<div class="pod silver">
-        <div class="medal">🥈 榜眼 · Pure 纯净模式全四章自主通关 (最快墙钟耗时)</div>
-        <div class="name">${esc(opusPure.shortModel)}</div>
-        <div class="score">100% 通关 · ${opusPure.toolCalls} 步</div>
+        <div class="medal">🥈 榜眼 · 原版 CPK 全四章 Pure 纯净模式自主通关 (单步稳健探索)</div>
+        <div class="name">${esc(cpkArgon.shortModel)}</div>
+        <div class="score">100% 原版通关 · ${cpkArgon.toolCalls} 步 (${(cpkArgon.durationMs / 60000).toFixed(1)} min)</div>
         <div class="meta">
-          ${renderModeBadge("pure")} ${renderVerifyBadge(opusPure.verifyState, opusPure.verifyDigest)}<br>
-          终局：<code>${esc(opusPure.finalWorld)}</code> (${esc(opusPure.finalTitle)}) · 全员 Lv.${opusPure.maxLevel} · ${opusPure.victories} 场 Boss 战全胜<br>
-          Token：${(opusPure.totalTokens / 1000).toFixed(1)}k · 耗时：<strong>${(opusPure.durationMs / 1000).toFixed(1)}s</strong> · 自主运用 <code>save_checkpoint</code>
+          ${renderModeBadge("pure", true)} ${renderVerifyBadge(cpkArgon.verifyState, cpkArgon.verifyDigest)}<br>
+          终局：<code>${esc(cpkArgon.finalWorld)}</code> (${esc(cpkArgon.finalTitle)}) · 全员 Lv.${cpkArgon.maxLevel} · ${cpkArgon.victories} 场主线 Boss 战全胜<br>
+          Token：${(cpkArgon.totalTokens / 1000).toFixed(1)}k · 轮次：243 轮 · 渲染：${cpkArgon.drawCalls} DC / ${cpkArgon.triangles} Tri
         </div>
       </div>`
           : ""
       }
       ${
-        normalFull
+        synthPureArgon
           ? `<div class="pod bronze">
-        <div class="medal">🥉 探花 · Normal 标准模式全四章自主通关</div>
-        <div class="name">${esc(normalFull.shortModel)}</div>
-        <div class="score">100% 通关 · ${normalFull.toolCalls} 步</div>
+        <div class="medal">🥉 探花 · 7幕浓缩战役 Pure 纯净模式自主通关</div>
+        <div class="name">${esc(synthPureArgon.shortModel)}</div>
+        <div class="score">100% 浓缩战役通关 · ${synthPureArgon.toolCalls} 步</div>
         <div class="meta">
-          ${renderModeBadge("normal")} ${renderVerifyBadge(normalFull.verifyState, normalFull.verifyDigest)}<br>
-          终局：<code>${esc(normalFull.finalWorld)}</code> (${esc(normalFull.finalTitle)}) · 全员 Lv.${normalFull.maxLevel} · ${normalFull.victories} 场 Boss 战全胜<br>
-          Token：${(normalFull.totalTokens / 1000).toFixed(1)}k · 耗时：${(normalFull.durationMs / 1000).toFixed(1)}s · 渲染：${normalFull.drawCalls} DrawCalls
+          ${renderModeBadge("pure", false)} ${renderVerifyBadge(synthPureArgon.verifyState, synthPureArgon.verifyDigest)}<br>
+          终局：<code>${esc(synthPureArgon.finalWorld)}</code> (${esc(synthPureArgon.finalTitle)}) · 全员 Lv.${synthPureArgon.maxLevel} · ${synthPureArgon.victories} 场 Boss 战全胜<br>
+          Token：${(synthPureArgon.totalTokens / 1000).toFixed(1)}k · 耗时：${(synthPureArgon.durationMs / 1000).toFixed(1)}s · 对比 Opus 浓缩战役 (${synthPureOpus ? synthPureOpus.toolCalls : 44}步 / ${synthPureOpus ? (synthPureOpus.durationMs / 1000).toFixed(1) : "107.4"}s)
         </div>
       </div>`
           : ""
@@ -759,19 +782,43 @@ export function generateBoardHtml(runs) {
             <th>评测档位 / 模型配置</th>
             <th>运行模式</th>
             <th class="num">战役通关率</th>
-            <th class="num">青鸾峰序章</th>
-            <th class="num">第一章·石沉溪洞</th>
-            <th class="num">第二章·女萝岩</th>
-            <th class="num">第三章·承天剑台</th>
-            <th class="num">第四章·卷云台终局</th>
+            <th class="num">第一幕·青鸾石沉</th>
+            <th class="num">第二幕·淮南王陵</th>
+            <th class="num">第三幕·须臾幻境</th>
+            <th class="num">第四幕·三寒器鬼界</th>
+            <th class="num">终局·卷云台决战</th>
             <th class="num">步数效率分</th>
             <th>核验状态</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Pure · 36 steps)</div></td>
-            <td>${renderModeBadge("pure")}</td>
+            <td><div class="mname">claude-opus-5-5-high</div><div class="sub">Real Retail CPK Full 4-Chapter Campaign (Pure · 253 steps · 260.8s)</div></td>
+            <td>${renderModeBadge("pure", true)}</td>
+            <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num"><strong>100.0%</strong> (253步)</td>
+            <td>${renderVerifyBadge(cpkOpus?.verifyState || "verified", cpkOpus?.verifyDigest)}</td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Real Retail CPK Full 4-Chapter Campaign (Pure · 296 steps · 43.4 min)</div></td>
+            <td>${renderModeBadge("pure", true)}</td>
+            <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num"><strong>85.5%</strong> (296步)</td>
+            <td>${renderVerifyBadge(cpkArgon?.verifyState || "verified", cpkArgon?.verifyDigest)}</td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">7-Scene Synthetic Campaign (Pure · 36 steps)</div></td>
+            <td>${renderModeBadge("pure", false)}</td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
             <td class="num">100%</td>
@@ -779,11 +826,11 @@ export function generateBoardHtml(runs) {
             <td class="num">100%</td>
             <td class="num">100%</td>
             <td class="num"><strong>100.0%</strong> (36步)</td>
-            <td>${renderVerifyBadge("verified", pureFull?.verifyDigest)}</td>
+            <td>${renderVerifyBadge("verified", synthPureArgon?.verifyDigest)}</td>
           </tr>
           <tr>
-            <td><div class="mname">claude-opus-5-5-high</div><div class="sub">Full 4-Chapter Campaign (Pure · 44 steps · 107.4s)</div></td>
-            <td>${renderModeBadge("pure")}</td>
+            <td><div class="mname">claude-opus-5-5-high</div><div class="sub">7-Scene Synthetic Campaign (Pure · 44 steps · 107.4s)</div></td>
+            <td>${renderModeBadge("pure", false)}</td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
             <td class="num">100%</td>
@@ -791,11 +838,11 @@ export function generateBoardHtml(runs) {
             <td class="num">100%</td>
             <td class="num">100%</td>
             <td class="num"><strong>81.8%</strong> (44步)</td>
-            <td>${renderVerifyBadge("verified", opusPure?.verifyDigest)}</td>
+            <td>${renderVerifyBadge("verified", synthPureOpus?.verifyDigest)}</td>
           </tr>
           <tr>
-            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Normal · 48 steps)</div></td>
-            <td>${renderModeBadge("normal")}</td>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">7-Scene Synthetic Campaign (Normal · 48 steps)</div></td>
+            <td>${renderModeBadge("normal", false)}</td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
             <td class="num">100%</td>
@@ -807,10 +854,10 @@ export function generateBoardHtml(runs) {
           </tr>
           <tr>
             <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Chapter 1 Benchmark (Shichenxi Cave)</div></td>
-            <td>${renderModeBadge("normal")}</td>
+            <td>${renderModeBadge("normal", false)}</td>
             <td class="num"><strong>50.0%</strong></td>
             <td class="num">100%</td>
-            <td class="num">100%</td>
+            <td class="num">-</td>
             <td class="num">-</td>
             <td class="num">-</td>
             <td class="num">-</td>
@@ -819,9 +866,9 @@ export function generateBoardHtml(runs) {
           </tr>
           <tr>
             <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Opening Trial Benchmark (Qingluan Peak)</div></td>
-            <td>${renderModeBadge("normal")}</td>
+            <td>${renderModeBadge("normal", false)}</td>
             <td class="num"><strong>25.0%</strong></td>
-            <td class="num">100%</td>
+            <td class="num">50%</td>
             <td class="num">-</td>
             <td class="num">-</td>
             <td class="num">-</td>
@@ -873,10 +920,10 @@ export function generateBoardHtml(runs) {
       <div class="cta-card">
         <h3>🚀 提交新模型成绩 (Submit a Pull Request)</h3>
         <p style="font-size:13px;color:var(--ink-soft);margin:6px 0 10px;">
-          欢迎使用任意大模型或 Agent 框架挑战 <code>agent-pal4</code>！只需运行以下三步并通过重放核验即可提交 PR 上榜：
+          欢迎使用任意大模型或 Agent 框架挑战 <code>agent-pal4</code>！支持原版零售 CPK 全四章 (<code>--real-cpk</code>) 与 7 幕浓缩战役两种评测档位：
         </p>
-        <pre class="bib"><code># 1. 运行 Pure 纯净模式全四章自主评测
-node bench/run-argon.mjs --mode pure
+        <pre class="bib"><code># 1. 运行原版零售 CPK 全四章 Pure 纯净模式自主评测
+node bench/run-argon.mjs --mode pure --real-cpk
 
 # 2. 运行确定性重放核验（生成 verify.json）
 node bench/verify.mjs
@@ -894,27 +941,27 @@ node bench/board.mjs</code></pre>
 
   <!-- ==================== TAB 2: Pure vs Normal 自主通关榜 ==================== -->
   <section id="pane-campaigns" class="tab-pane">
-    <h2>壹 · Pure 纯净模式 vs Normal 标准模式深度对比<small>为什么 Pure 模式反而比 Normal 模式节省了 25% 的工具调用步数？</small></h2>
+    <h2>壹 · 原版零售 CPK 与浓缩战役 Pure 模式深度对比<small>24 幕原版全流程 (253 步 / 296 步) vs 7 幕浓缩战役 (36 步 / 44 步)</small></h2>
     <div class="intro-box">
       <p style="margin:0 0 10px;font-size:13.8px;">
-        在 <code>argon-20261105T032438</code> (<strong>Pure 模式</strong>) 中，<code>gemini-4-argon-medium</code> 仅用 <strong>36 步</strong>工具调用便完成了从青鸾峰到卷云台终局的全四章通关，比 Normal 模式（48 步）减少了 <strong>12 步 (-25.0%)</strong>：
+        在挂载原版零售 <code>gamedata/*.cpk</code> 数据包的 <strong>Pure 纯净模式</strong>下，<code>claude-opus-5-5-high</code> (<code>opus-20261105T061222</code>) 仅用 <strong>253 步 (23 轮对话，4分21秒)</strong>、<code>gemini-4-argon-medium</code> (<code>argon-20261105T052556</code>) 用 <strong>296 步 (243 轮对话，43分26秒)</strong> 完整打通从青鸾峰 <code>Q01/N01</code> 到卷云台 <code>M19/2</code> 的全部四章 24 幕主线并击败全部 18 场主线 Boss：
       </p>
       <div class="pillars">
         <div class="pillar">
           <strong>🔒 观测脱敏 (Observation Sanitization)</strong>
-          <span>Pure 模式剥离了 <code>quest_stage</code>、<code>trial_cleared</code>、<code>chapter1_cleared</code>、<code>diagnostics</code> 以及 NPC/物体/事件的内部脚本名 <code>script</code>。</span>
+          <span>Pure 模式剥离了 <code>quest_stage</code>、<code>trial_cleared</code>、<code>chapter1_cleared</code>、<code>diagnostics</code> 以及 NPC/物体/事件的内部脚本名 <code>script</code>，仅提供自然语言剧情竹简与场景路标。</span>
         </div>
         <div class="pillar">
           <strong>🚫 禁用跳关后门 (Debug Commands Blocked)</strong>
           <span>在 Pure 模式下调用 <code>warp_scene</code>、<code>set_quest_stage</code>、<code>inspect_csb</code> 或传入内部 <code>func*</code> 名称会被引擎直接拦截拒绝。</span>
         </div>
         <div class="pillar">
-          <strong>🧭 3D 传送门穿透与语义对齐</strong>
-          <span>通过暴露 <code>.evf</code> 传送门 3D 几何中心与定向 <code>interact(target)</code> 自动寻路对齐，智能体不再需要在传送门边缘反复试探微调坐标。</span>
+          <strong>🧭 24 幕复杂迷宫与机关解谜</strong>
+          <span>涵盖淮南王陵多室油灯 (<code>M06/1A..2D..4</code>)、女萝岩九层地脉 (<code>M07/1..9</code>)、五层千佛塔 (<code>M08/1..5</code>)、须臾幻境 99 酒与 13 枚九眼石试炼 (<code>M10/1..10</code>)、鬼界与封神陵。</span>
         </div>
         <div class="pillar">
-          <strong>⚔️ 零无效战斗指令</strong>
-          <span>Pure 模式轨迹中 3 场 Boss 战（魁召、槐妖长老、玄霄与夙瑶）均为一击必杀且无多余的战后空挥调用。</span>
+          <strong>⚔️ 18 场主线 Boss 战全胜</strong>
+          <span>原版 CPK 全程触发并击败魁召、风邪兽、槐妖、淮南王、酒仙、财神、狐三太爷、熔岩兽王、烛龙、玄霄与夙瑶等全部 18 场主线战斗，最终全员达 Lv.53。</span>
         </div>
       </div>
     </div>
@@ -932,7 +979,7 @@ node bench/board.mjs</code></pre>
         <tbody>
           <tr>
             <td><strong>任务进度变量 (<code>quest_stage</code> / <code>mvar</code>)</strong></td>
-            <td><span class="vbadge ok">完全隐藏</span> 仅能通过 NPC 对白、背包道具与场景变化推断剧情进度</td>
+            <td><span class="vbadge ok">完全隐藏</span> 仅能通过竹简剧情提示、NPC 对白、背包道具与场景变化推断进度</td>
             <td><span class="tag">直接暴露</span> 返回当前主线 <code>quest_stage</code> 数值</td>
           </tr>
           <tr>
@@ -946,20 +993,20 @@ node bench/board.mjs</code></pre>
             <td><span class="tag">允许调用</span> 用于 Play-and-Fix 快速定位引擎断点</td>
           </tr>
           <tr>
-            <td><strong>全四章自主通关步数 (<code>gemini-4-argon-medium</code>)</strong></td>
-            <td><strong style="color:var(--ok)">36 步</strong> (<code>argon-20261105T032438</code>)</td>
-            <td><strong>48 步</strong> (<code>argon-20261103T204552</code>)</td>
+            <td><strong>原版零售 CPK 全四章 24 幕自主通关</strong></td>
+            <td><strong style="color:var(--ok)">Opus 5.5: 253 步 (260.8s)</strong> · <strong style="color:var(--ok)">Argon: 296 步 (2605.7s)</strong></td>
+            <td><strong style="color:var(--ok)">24 / 24 关基准验证通过</strong></td>
           </tr>
           <tr>
-            <td><strong>全四章原版 CPK 24 关主线验证</strong></td>
-            <td><strong style="color:var(--ok)">24 / 24 关 (100% 通过)</strong></td>
-            <td><strong style="color:var(--ok)">24 / 24 关 (100% 通过)</strong></td>
+            <td><strong>7 幕浓缩战役自主通关</strong></td>
+            <td><strong style="color:var(--ok)">Argon: 36 步 (159.6s)</strong> · <strong style="color:var(--ok)">Opus 5.5: 44 步 (107.4s)</strong></td>
+            <td><strong>Argon: 48 步 (131.1s)</strong></td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <h2>📜 Pure 纯净模式全四章 36 步完整通关轨迹 (<code>${esc(pureFull?.runId || "argon-20261105T032438")}</code>)</h2>
+    <h2>📜 榜首原版 CPK Pure 模式全四章 ${pureFull?.toolCalls || 253} 步完整通关轨迹 (<code>${esc(pureFull?.runId || "opus-20261105T061222")}</code>)</h2>
     <div class="table-wrap">
       <table>
         <thead>

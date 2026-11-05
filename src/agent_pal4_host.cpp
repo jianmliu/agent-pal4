@@ -699,6 +699,24 @@ public:
         AutoConfigureDialog();
     }
 
+    std::string DrainCutsceneDialogs(int max_lines = 250) {
+        auto& h = *host_;
+        std::string transcript;
+        for (int lines = 0; lines < max_lines && h.dialog && h.dialog->View().visible && !combat_.active; ++lines) {
+            const auto view = h.dialog->View();
+            if (!transcript.empty()) transcript += " | ";
+            transcript += view.display_text;
+            h.dialog->Confirm(view.generation, view.id);
+            if (h.dialog->View().visible) {
+                h.dialog->Confirm(view.generation, view.id);
+            }
+            AdvanceHostFrame(1.0f / 30.0f);
+            AdvanceUntilInteractive(2400);
+            if (combat_.active) break;
+        }
+        return transcript;
+    }
+
     std::string Interact(std::string_view target = {}) {
         auto& h = *host_;
         AutoConfigureDialog();
@@ -857,6 +875,10 @@ public:
         }
         if (using_real_cpk_) {
             AdvanceUntilInteractive(600);
+            const std::string drained = DrainCutsceneDialogs();
+            if (!drained.empty()) {
+                return "opened_dialog:" + drained;
+            }
         }
         if (h.dialog && h.dialog->View().visible) {
             return "opened_dialog:" + h.dialog->View().display_text;
@@ -879,6 +901,7 @@ public:
                     AdvanceHostFrame(1.0f / 30.0f);
                     if (using_real_cpk_) {
                         AdvanceUntilInteractive(1200);
+                        (void)DrainCutsceneDialogs();
                     }
                     RenderHeadlessFrame();
                     return "used_item:EarthBall";
@@ -917,6 +940,7 @@ public:
         }
         AdvanceHostFrame(1.0f / 30.0f);
         AdvanceUntilInteractive(1200);
+        (void)DrainCutsceneDialogs();
         RenderHeadlessFrame();
         return "flew_to:" + std::string(destination);
     }
@@ -1118,6 +1142,388 @@ public:
         Point3 final_position{};
         float distance_remaining{};
     };
+
+    struct JournalEntry {
+        std::string summary;
+        std::string waypoint;
+    };
+
+    JournalEntry ComputeQuestJournal() const {
+        const auto& h = *host_;
+        const std::string w = h.arena ? h.arena->description.world : "";
+        const std::string s = h.arena ? h.arena->description.scene : "";
+        const std::int32_t m = h.game_globals[0];
+        const auto count_item = [&](std::uint32_t id) -> std::uint32_t {
+            return h.inventory ? h.inventory->Count(id) : 0u;
+        };
+        const auto gob_ready = [&](std::string_view name) -> bool {
+            if (!h.scene_objects) return false;
+            const auto states = h.scene_objects->States();
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                if (states[i].name == name) {
+                    return h.scene_objects->InteractionEnabled(i) && states[i].uses > 0;
+                }
+            }
+            return false;
+        };
+        const auto near_pos = [&](float x, float z, float radius = 80.0f) -> bool {
+            const auto pos = h.players.Slots()[h.players.Leader()].position;
+            return std::hypot(pos[0] - x, pos[2] - z) <= radius;
+        };
+
+        if (w == "Q01" && s == "N01") {
+            if (m <= 10100) return {"清晨青鸾峰树屋：确认开场对白后前往树屋外的青鸾峰。", "interact"};
+            if (m <= 10300) return {"青鸾峰树屋：走近桌案取回云天青遗留的猎弓与古剑。", "MO002"};
+        }
+        if (w == "Q01" && (s == "Q01" || s == "Q01Y")) {
+            if (m < 10300) return {"怪猪闯入石沉溪洞，先返回青鸾峰树屋取猎弓与古剑。", "ev_Q01_Q01_1"};
+            if (m < 10400) return {"已取回猎弓与古剑，前往青鸾峰北侧的石沉溪洞入口追击怪猪。", "ev_Q01_Q01_5"};
+            if (m < 11500) return {"与韩菱纱返回青鸾峰，先回树屋收拾行囊。", "ev_Q01_Q01_1"};
+            if (m < 20200) return {"前往云天青墓前拜别父亲，随后下山前往紫云架。", "ev_Q01_Q01_6"};
+            if (m >= 160000) {
+                if (m <= 160700) return {"夜归青鸾峰：前往树屋旧居探访。", "ev_Q01_Q01_1"};
+                if (m <= 160900) return {"前往父母墓前祭拜并立誓阻止琼华飞升。", "ev_Q01_Q01_6"};
+                return {"御剑前往播仙镇太一仙径（Q05），准备决战琼华。", "fly_to:Q05"};
+            }
+        }
+        if (w == "Q01" && s == "N02") {
+            return {"树屋内收拾妥当，离开树屋前往墓地拜别。", "ev_Q01_N02_0"};
+        }
+        if (w == "Q01" && s == "N02Y") {
+            return {"离开夜色中的青鸾峰树屋，前往父母墓前。", "ev_Q01_N02Y_0"};
+        }
+        if (w == "M01" && s == "1") {
+            if (m < 10600) return {"深入石沉溪洞，探查前方的红衣少女踪迹。", "ev_M01_1_6"};
+            if (m < 11100) return {"继续深入石沉溪洞通道，迎战洞中符灵魁召。", "ev_M01_1_7"};
+            return {"魁召已化作符灵，开启前方石门进入冰封墓室。", "ev_M01_1_5"};
+        }
+        if (w == "M01" && s == "3") {
+            return {"冰封墓室崩塌，沿石沉溪洞出口返回青鸾峰。", "ev_M01_1_4"};
+        }
+        if (w == "M02" && s == "1") {
+            return {"穿越紫云架山道，前往山脚的太平村。", "LinkObj01"};
+        }
+        if (w == "M02" && s == "3") {
+            return {"沿紫云架下山出口进入太平村。", "ev_M02_3_1"};
+        }
+        if (w == "Q02" && s == "Q02") {
+            if (m < 20600) return {"太平村端午祭祀：前往村中大钟处探看风俗。", "ev_Q02_Q02_13"};
+            return {"被村民驱赶出太平村，向南前往巢湖湖畔扎营。", "ev_Q02_Q02_14"};
+        }
+        if (w == "M03" && s == "1") {
+            if (m < 20900) return {"巢湖树林：寻觅湖边空地生火露宿。", "ev_M03_1_8"};
+            if (m < 21700) return {"剑仙慕容紫英解围后，离开巢湖前往寿阳城。", "ev_M03_1_7"};
+            if (m < 120000) return {"踏入巢湖百翎洲旋涡，潜入湖底居巢国。", "ev_M03_1_13"};
+            return {"已获水灵珠并脱离海底居巢国，御剑返回琼华派（Q06）。", "fly_to:Q06"};
+        }
+        if (w == "M03" && s == "1Y") {
+            return {"巢湖夜半妖风骤起，迎战风邪兽。", "ev_M03_1Y_6"};
+        }
+        if (w == "M03" && s == "3") {
+            if (m <= 110400) return {"沿百翎洲海底通道深入居巢国。", "ev_M03_3_8"};
+            if (m <= 110500) return {"穿过百翎洲底层水道进入居巢国。", "ev_M03_3_42"};
+            return {"使用土灵珠（use_item: EarthBall）脱离海底百翎洲。", "use_item:EarthBall"};
+        }
+        if (w == "Q03" && s == "Q03S") {
+            if (m < 21800) return {"初抵寿阳城南：前往告示牌围观人群处查看。", "ev_Q03_Q03S_23"};
+            if (m < 21900) return {"走近告示牌揭下海捕文书。", "MO005"};
+            if (m < 21901) return {"前往寿阳城北的柳府。", "ev_Q03_Q03S_1"};
+            if (m >= 30201 && m < 30500) return {"离开寿阳城南门，前往八公山淮南王陵。", "ev_Q03_Q03S_0"};
+            if (m >= 31300 && m < 40100) return {"由寿阳城南前往城北柳府复命。", "ev_Q03_Q03S_1"};
+            return {"离开寿阳城南门，经八公山前往女萝岩地脉。", "ev_Q03_Q03S_0"};
+        }
+        if (w == "Q03" && s == "Q03X") {
+            if (m < 22100) return {"前往寿阳城北柳府大门投宿。", "ev_Q03_Q03X_3"};
+            if (m < 30200) return {"在柳府门前与众人商议女萝岩之事。", "ev_Q03_Q03X_13"};
+            if (m < 30201) return {"经寿阳城北前往城南出口赶赴八公山。", "ev_Q03_Q03X_3"};
+            if (m < 31400) return {"返回寿阳柳府向柳世封老爷复命。", "ev_Q03_Q03X_3"};
+            if (m < 31500) return {"在寿阳城北街头与韩菱纱交谈。", "ev_Q03_Q03X_14"};
+            if (m < 40100) return {"返回柳府大堂。", "ev_Q03_Q03X_7"};
+            return {"由寿阳城北前往城南大门离开寿阳。", "ev_Q03_Q03X_0"};
+        }
+        if (w == "Q03" && (s == "XN03Y" || s == "XN03")) {
+            if (s == "XN03Y") return {"夜探柳府后院，离开厅堂前往女萝岩查探。", "ev_Q03_XN03_0"};
+            if (m < 30200) return {"离开柳府花厅前往府门。", "ev_Q03_XN03_0"};
+            if (m < 40100) return {"在柳府花厅与柳梦璃会合，邀请她同行寻访剑仙。", "ev_Q03_XN03_2"};
+            return {"告别柳氏夫妇，走出柳府启程前往陈州。", "ev_Q03_XN03_0"};
+        }
+        if (w == "M04" && s == "1") {
+            return {"深入女萝岩底层，击败槐妖长老。", "ev_M04_1_30"};
+        }
+        if (w == "M05" && s == "1") {
+            if (m < 30600) return {"八公山山道：拨开藤蔓进入淮南王陵墓道。", "tengman"};
+            if (m < 31400) return {"已脱出淮南王陵，沿八公山路返回寿阳城。", "ev_M05_1_3"};
+            if (m < 40400) return {"八公山：触发女萝岩地脉入口剧情。", "ev_M05_1_5"};
+            return {"进入女萝岩地脉通道前往陈州。", "ev_M05_1_6"};
+        }
+        if (w == "M06") {
+            if (m >= 31200) return {"淮南王已伏诛，沿原路攀爬梯子离开淮南王陵。", "ladder"};
+            if (s == "1A") {
+                if (m < 30700 && gob_ready("light01_f")) return {"淮南王陵前殿：点燃长明灯开启墓门。", "light01_f"};
+                return {"进入淮南王陵北侧墓室通道。", "ev_M06_1_0"};
+            }
+            if (s == "1B") {
+                if (m < 30700) return {"穿过墓室前往下层通道。", "ev_M06_1_3"};
+                return {"返回前殿通路进入二层墓道。", "ev_M06_1_0"};
+            }
+            if (s == "2A") {
+                if (m < 31100) return {"沿二层墓道深入王陵回廊。", "ev_M06_2_7"};
+                if (gob_ready("light1_f")) return {"点燃二层回廊第一盏油灯（light1_f）。", "light1_f"};
+                if (gob_ready("light2_f")) return {"点燃二层回廊第二盏油灯（light2_f）。", "light2_f"};
+                return {"通过开启的墓门进入二层墓室。", "ev_M06_2_2"};
+            }
+            if (s == "2B") {
+                return {"穿过二层墓室前往侧殿。", "ev_M06_2_3"};
+            }
+            if (s == "1C") {
+                if (gob_ready("light1_f")) return {"点燃侧殿第一盏机关灯（light1_f）。", "light1_f"};
+                if (gob_ready("light2_f")) return {"点燃侧殿第二盏机关灯（light2_f）。", "light2_f"};
+                return {"进入深层丹房通道。", "ev_M06_1_0"};
+            }
+            if (s == "2D") {
+                if (gob_ready("light1_f")) return {"点燃丹房第一盏油灯（light1_f）。", "light1_f"};
+                if (gob_ready("light2_f")) return {"点燃丹房第二盏油灯（light2_f）。", "light2_f"};
+                if (gob_ready("light3_f")) return {"点燃丹房第三盏油灯（light3_f）。", "light3_f"};
+                return {"由开启的墓门进入淮南王主墓室。", "ev_M06_2_5"};
+            }
+            if (s == "4") return {"淮南王陵主墓室：迎战风水惊变后的淮南王冤魂。", "ev_M06_4_1"};
+        }
+        if (w == "M07") {
+            if (s == "1") {
+                if (m < 40900) return {"深入女萝岩地脉一层。", "ev_M07_1_4"};
+                if (!near_pos(86.95f, -1665.63f, 80.f)) return {"开启地脉一层石门机关（huaRongDoor01_ev）。", "huaRongDoor01_ev"};
+                return {"踏入一层传送点进入二层。", "temp"};
+            }
+            if (s == "2") return {"穿过女萝岩地脉二层。", "ev_M07_2_8"};
+            if (s == "3") return {"启动三层传送机关（temp2）进入四层。", "temp2"};
+            if (s == "4") {
+                if (m < 41000) return {"深入女萝岩地脉四层。", "ev_M07_4_4"};
+                return {"启动四层传送机关（temp11）进入五层。", "temp11"};
+            }
+            if (s == "5") return {"穿过女萝岩地脉五层。", "ev_M07_5_3"};
+            if (s == "6") {
+                if (m < 41602) return {"深入女萝岩地脉六层。", "ev_M07_6_1"};
+                return {"离开女萝岩地脉六层进入七层。", "ev_M07_6_3"};
+            }
+            if (s == "7") return {"穿过女萝岩地脉七层。", "ev_M07_7_1"};
+            if (s == "8") return {"击败地脉八层镇守妖兽。", "ev_M07_8_6"};
+            if (s == "9") return {"走出女萝岩地脉九层出口，抵达陈州城。", "ev_M07_9_2"};
+        }
+        if (w == "Q04" && s == "Q04C") {
+            if (m < 50300) return {"初抵陈州：在城门附近打听秦家与修仙奇人消息。", "ev_Q04_Q04C_24"};
+            if (m < 50400) return {"前往陈州客栈投宿。", "ev_Q04_Q04C_4"};
+            return {"离开陈州城西门，启程前往昆仑山脚的播仙镇。", "ev_Q04_Q04C_27"};
+        }
+        if (w == "Q04" && s == "CN03") {
+            if (m < 50500) return {"在陈州客栈大堂向店小二（4087）打听消息并休息。", "4087"};
+            return {"离开客栈大堂返回陈州街道。", "ev_Q04_CN03_1"};
+        }
+        if (w == "Q04" && s == "Q04CY") {
+            return {"夜游陈州湖畔，前往弦歌台方向。", "ev_Q04_Q04CY_28"};
+        }
+        if (w == "Q04" && s == "Q04HY") {
+            return {"弦歌台听琴后，前往千佛塔查探。", "ev_Q04_Q04HY_0"};
+        }
+        if (w == "M08") {
+            if (s == "1") {
+                if (m < 50600) return {"千佛塔底层：走近琴姬与慕容紫英。", "ev_M08_1_13"};
+                return {"登上千佛塔二层。", "ev_M08_1_3"};
+            }
+            if (s == "2") return {"登上千佛塔三层。", "ev_M08_2_1"};
+            if (s == "3") return {"登上千佛塔四层。", "ev_M08_3_2"};
+            if (s == "4") return {"登上千佛塔五层顶阁。", "ev_M08_4_2"};
+            if (s == "5") return {"千佛塔顶层见证姜氏往事。", "ev_M08_5_1"};
+        }
+        if (w == "Q04" && s == "CN05C") return {"离开客栈客房前往走廊。", "ev_Q04_CN05_0"};
+        if (w == "Q04" && s == "CN04") return {"由客栈二楼下到一楼大堂。", "ev_Q04_CN04_0"};
+        if (w == "Q05" && s == "Q05") {
+            if (m < 51700) return {"抵达西域播仙镇：前往镇中客栈投宿休息。", "ev_Q05_Q05_12"};
+            if (m < 70000) return {"由播仙镇北门踏上太一仙径，攀登昆仑琼华派。", "ev_Q05_Q05_24"};
+            return {"已习得御剑之术，御剑飞往碗丘山（M11）查探水灵珠线索。", "fly_to:M11"};
+        }
+        if (w == "Q05" && s == "N02") {
+            return {"播仙镇客栈休息完毕，出门前往太一仙径。", "ev_Q05_N02_0"};
+        }
+        if (w == "Q05" && s == "Q05P") {
+            return {"播仙镇望见昆仑山火光冲天，立即御剑飞往焚毁的琼华派（M19）！", "fly_to:M19"};
+        }
+        if (w == "M09" && s == "1") {
+            if (m < 70000) return {"沿太一仙径盘山古道向上攀登。", "ev_M09_1_2"};
+            return {"下至太一仙径山门进入播仙镇。", "ev_M09_1_4"};
+        }
+        if (w == "M09" && s == "2") {
+            if (m <= 60600) return {"太一仙径中段：上前迎战镇守仙径的白衣剑客。", "ev_M09_2_2"};
+            if (m < 70000) return {"继续沿太一仙径登往昆仑山巅。", "ev_M09_2_1"};
+            return {"沿太一仙径下山。", "ev_M09_2_0"};
+        }
+        if (w == "M09" && s == "3") {
+            if (m < 70000) return {"穿过太一仙径顶层步入琼华派山门。", "ev_M09_3_0"};
+            return {"沿太一仙径向山下行进。", "ev_M09_3_1"};
+        }
+        if (w == "Q06" && s == "QN03") {
+            if (m < 61001) return {"琼华派大殿：走近掌门夙瑶（MN001）接受入门试炼。", "MN001"};
+            return {"向掌门夙瑶复命完毕，离开琼华大殿。", "ev_Q06_QN03_0"};
+        }
+        if (w == "M10" && s == "1") {
+            if (m <= 61001) return {"须臾幻境·酒：与酒仙翁（MN001）交谈开启九十九坛美酒试炼。", "MN001"};
+            if (m == 61002 && count_item(3253) < 99) {
+                return {"须臾幻境·酒：需收集齐 99 坛美酒（可对 wine001 使用 repeat=99 批量拾取）。", "wine001"};
+            }
+            if (m == 61002) return {"已集齐 99 坛美酒，触发 wineIsAll 完成酒之试炼。", "wineIsAll"};
+            return {"踏入前方传送法阵进入财神试炼。", "ev_M10_1_3"};
+        }
+        if (w == "M10" && s == "10") {
+            if (count_item(3126) < 13) {
+                return {"须臾幻境·财：需拾取 13 枚九眼石（可对 JA01 使用 repeat=13 批量拾取）。", "JA01"};
+            }
+            return {"已集齐 13 枚九眼石，与财神（MN001）交谈离开须臾幻境。", "MN001"};
+        }
+        if (w == "Q06" && s == "Q06Q") {
+            if (m < 70200) return {"返回琼华派前山广场，前往弟子房休息。", "ev_Q06_Q06Q_22"};
+            if (m == 70200) return {"前往剑舞坪向慕容紫英请教仙术。", "ev_Q06_Q06Q_47"};
+            if (m == 70400) return {"前往琼华山门与慕容紫英会合习得御剑之术。", "ev_Q06_Q06Q_48"};
+            if (m == 70500) return {"由琼华派山门前往太一仙径下山历练。", "ev_Q06_Q06Q_7"};
+            if (m == 70900 || m == 71100 || m == 100700 || m == 101500) return {"前往琼华派大殿向掌门夙瑶禀报。", "ev_Q06_Q06Q_49"};
+            if (m == 71200 || m == 80100 || m == 80600 || m == 100100 || m == 120400) return {"返回琼华派弟子房休息。", "ev_Q06_Q06Q_22"};
+            if (m == 71300 || m == 71400 || m == 80700 || m == 80800 || m == 90800 || m == 91300 || m == 120100 || m == 120200 || m == 120800 || m == 121000) return {"由后山小径前往思返谷与禁地。", "ev_Q06_Q06Q_45"};
+            if (m == 81100) return {"前往醉花荫探望清阳真人。", "ev_Q06_Q06Q_39"};
+            if (m == 100101 || m == 100200) return {"受玄霄所托寻找三寒器：御剑飞往炎帝神农洞（M14）。", "fly_to:M14"};
+            if (m == 100800 || m == 110200) return {"御剑飞往巢湖（M03）百翎洲探寻居巢国与水灵珠。", "fly_to:M03"};
+            if (m == 120501 || m == 120600 || m >= 140000) return {"前往琼华派卷云台。", "ev_Q06_Q06Q_37"};
+        }
+        if (w == "Q06" && s == "QN05") {
+            if (m < 70200 || m == 71200 || m == 100100 || m == 120400) return {"在弟子房床榻休息。", "ev_Q06_QN05_1"};
+            return {"离开弟子房前往琼华前山广场。", "ev_Q06_QN05_0"};
+        }
+        if (w == "Q06" && s == "QN05Y") {
+            if (m == 71400) return {"离开夜间弟子房前往琼华广场。", "ev_Q06_QN05_0"};
+            return {"夜深人静，离开弟子房探查琼华异动。", "ev_Q06_QN05Y_2"};
+        }
+        if (w == "Q06" && (s == "Q06S" || s == "Q06SY")) return {"沿山间小径离开思返谷。", "ev_Q06_Q06S_2"};
+        if (w == "Q06" && s == "Q06QY") {
+            if (m == 71400 || m == 80700) return {"由后山小径进入思返谷。", "ev_Q06_Q06Q_45"};
+            if (m == 80100) return {"返回弟子房休息。", "ev_Q06_Q06Q_22"};
+            return {"夜色中穿过琼华广场。", "ev_Q06_Q06QY_55"};
+        }
+        if (w == "Q06" && s == "Q06H") {
+            if (m == 71900 || m == 80200 || m == 80700 || m == 80900 || m == 90900 || m == 91300 || m == 120200 || m == 120300) return {"走近琼华后山禁地石门。", "ev_Q06_Q06H_31"};
+            return {"推开禁地石门进入冰封禁地见玄霄。", "ev_Q06_Q06H_2"};
+        }
+        if (w == "Q06" && s == "Q06J") {
+            if (m < 130000) return {"在卷云台窥见夙瑶与玄霄密谈后返回广场。", "ev_Q06_Q06J_0"};
+            if (m == 140100) return {"在卷云台见证幻瞑界旋梦降临。", "ev_Q06_Q06J_5"};
+            return {"由卷云台踏入幻瞑界入口。", "ev_Q06_Q06J_4"};
+        }
+        if (w == "M11" && s == "1") return {"碗丘山：穿越沙丘前往月牙村。", "ev_M11_1_0"};
+        if (w == "Q07" && s == "Q07") {
+            if (m < 100000) return {"月牙村水源干涸，御剑返回琼华派（Q06）向夙瑶借水灵珠。", "fly_to:Q06"};
+            return {"离开月牙村，御剑前往醉花荫（Q08）休整。", "fly_to:Q08"};
+        }
+        if (w == "M20" && s == "1Y") {
+            if (m == 80100) return {"离开后山山道返回琼华前山。", "ev_M20_1_3"};
+            if (m == 80700) return {"穿过思返谷山道前往后山禁地。", "ev_M20_1_1"};
+            return {"夜过思返谷，前往琼华后山。", "ev_M20_1Y_5"};
+        }
+        if (w == "M20" && s == "1") {
+            if (m == 80400 || m == 80800 || m == 81000 || m == 100000 || m == 100100 || m == 120300 || m == 120400) return {"离开后山山道返回琼华前山。", "ev_M20_1_3"};
+            if (m == 80700 || m == 90800 || m == 91300 || m == 120100 || m == 120200) return {"穿过思返谷山道前往后山禁地。", "ev_M20_1_1"};
+            if (m == 120800 || m == 121000) return {"前往禁地见证玄霄破冰而出！", "ev_M20_1_4"};
+            return {"玄霄破冰后与琼华决裂，御剑前往醉花荫（Q08）。", "fly_to:Q08"};
+        }
+        if (w == "M12" && s == "1") return {"穿过醉花荫山道前往清阳真人居所。", "ev_M12_1_2"};
+        if (w == "Q08" && s == "Q08") {
+            if (m < 90000) return {"醉花荫：上前探望重伤的清阳真人。", "ev_Q08_Q08_0"};
+            if (m < 90200) return {"清阳真人托付往事，御剑飞往即墨（Q09）查探光纪寒图。", "fly_to:Q09"};
+            if (m >= 121100 && m < 130100) return {"在醉花荫草庐静养商议对策。", "ev_Q08_Q08_0"};
+            if (m >= 130100 && m < 140000) return {"御剑飞往鬼界入口无常殿山道（M15）。", "fly_to:M15"};
+            if (m >= 160000 && m < 160400) return {"幻瞑界之战后在醉花荫休整。", "ev_Q08_Q08_0"};
+            return {"御剑重返故乡青鸾峰（Q01）祭拜父母。", "fly_to:Q01"};
+        }
+        if (w == "Q09" && s == "Q09") {
+            if (m <= 90300) return {"即墨海滨：探查城郊异变并进入夏螟虫笼。", "ev_Q09_Q09_16"};
+            if (m <= 90900) return {"狐仙伏诛后返回即墨，前往余铁干家中。", "ev_Q09_Q09_8"};
+            if (m <= 90901) return {"前往即墨药铺。", "ev_Q09_Q09_9"};
+            return {"即墨花灯夜话完毕，御剑返回琼华派（Q06）向玄霄献上光纪寒图。", "fly_to:Q06"};
+        }
+        if (w == "M13" && s == "1") {
+            if (m <= 90500) return {"深入夏螟虫笼幻境追查狐仙。", "ev_M13_1_2"};
+            return {"迎战夏螟虫笼中的狐三太爷。", "ev_M13_1_3"};
+        }
+        if (w == "Q09" && (s == "N10" || s == "N10A")) return {"离开民居返回即墨街道。", "ev_Q09_N10_1"};
+        if (w == "Q09" && (s == "N11" || s == "N11A")) return {"离开药铺共赴即墨花灯之夜。", "ev_Q09_N11_0"};
+        if (w == "Q09" && s == "N01") {
+            return {"走出即墨客栈欣赏花灯。", "ev_Q09_N01_0"};
+        }
+        if (w == "M14" && s == "1") {
+            if (m <= 100400) return {"炎帝神农洞一层：深入熔岩洞窟。", "ev_M14_1_1"};
+            return {"通过熔岩断桥进入神农洞二层。", "ev_M14_1_2"};
+        }
+        if (w == "M14" && s == "2") {
+            if (m < 101400) return {"穿过炎帝神农洞二层前往底层月幽之境。", "ev_M14_2_2"};
+            return {"已获炙炎石与梭罗果，御剑返回琼华派（Q06）。", "fly_to:Q06"};
+        }
+        if (w == "M14" && s == "3") {
+            if (m <= 100800) return {"迎战熔岩兽王并拾取炙炎石（MO001）。", "MO001"};
+            if (m <= 101100) return {"前往月幽之境采摘梭罗果。", "ev_M14_3_1"};
+            return {"已获炙炎石与梭罗果，御剑返回琼华派（Q06）。", "fly_to:Q06"};
+        }
+        if (w == "Q10" && s == "Q10") {
+            if (m <= 110600) return {"居巢国：上前探查槐妖聚落。", "ev_Q10_Q10_19"};
+            if (m <= 110700) return {"深入居巢国腹地。", "ev_Q10_Q10_20"};
+            return {"在居巢国击败镇守妖将夺回水灵珠与鲲鳞。", "ev_Q10_Q10_27"};
+        }
+        if (w == "M15" && s == "1") {
+            if (m <= 130200) return {"鬼界外围山道：触发放逐行剧情。", "ev_M15_1_161"};
+            return {"沿山道进入二层前往鬼界。", "ev_M15_1_3"};
+        }
+        if (w == "M15" && s == "2") {
+            if (m <= 130201) return {"在山道二层触发剧情。", "ev_M15_2_21"};
+            return {"踏入鬼界入口进入鬼界外围。", "ev_M15_2_35"};
+        }
+        if (w == "Q11" && s == "Q11W") {
+            if (m <= 130501) return {"鬼界外围：前往无常殿方向。", "ev_Q11_Q11W_19"};
+            return {"进入转轮镜台。", "ev_Q11_Q11W_14"};
+        }
+        if (w == "Q11" && s == "Q11Z") {
+            if (m <= 130600) return {"转轮镜台：上前呼唤云天青魂魄。", "ev_Q11_Q11Z_1"};
+            return {"告别云天青，离开转轮镜台前往不周山。", "ev_Q11_Q11Z_4"};
+        }
+        if (w == "M16" && s == "1") return {"不周山盘龙镇柱：迎战神龙衔烛之龙。", "ev_M16_1_0"};
+        if (w == "Q13" && s == "Q13") {
+            if (m <= 131200) return {"丰都鬼城：在城中探查。", "ev_Q13_Q13_15"};
+            return {"御剑飞往封神陵（M17）取后羿射日弓。", "fly_to:M17"};
+        }
+        if (w == "M17" && s == "1") return {"封神陵一层：深入神陵通道。", "ev_M17_1_2"};
+        if (w == "M17" && s == "2") return {"封神陵二层：开启天枢通道前往顶层。", "ev_M17_2_4"};
+        if (w == "M17" && s == "5") {
+            if (m < 140100) return {"封神陵顶层祭坛：击败镇守神将句芒，取下后羿射日弓。", "ev_M17_5_11"};
+            return {"已获后羿射日弓，御剑返回琼华派（Q06）阻止大战。", "fly_to:Q06"};
+        }
+        if (w == "Q14" && s == "Q14W") return {"幻瞑界外围：突破琼华派结界进入幻瞑界。", "ev_Q14_Q14W_3"};
+        if (w == "Q14" && s == "Q14B") {
+            if (m < 141400) return {"幻瞑界：前往婵幽宫殿。", "ev_Q14_Q14B_16"};
+            if (m < 150300) return {"踏入里幻瞑宫。", "ev_Q14_Q14B_19"};
+            return {"离开幻瞑宫殿前往出口。", "ev_Q14_Q14B_20"};
+        }
+        if (w == "Q14" && s == "LN01") {
+            return {"离开婵幽大殿。", "ev_Q14_LN01_2"};
+        }
+        if (w == "Q14" && s == "Q14L") {
+            if (m < 150300) return {"穿过幻瞑花径。", "ev_Q14_Q14L_2"};
+            return {"挥泪告别继位少主的柳梦璃，离开幻瞑界。", "ev_Q14_Q14L_3"};
+        }
+        if (w == "M18" && s == "1") return {"深入里幻瞑宫，探寻十九年前琼华与梦貘一族的真相。", "ev_M18_1_5"};
+        if (w == "Q14" && s == "BN06") {
+            if (m <= 140701) return {"上前与幻瞑界之主婵幽（MN001）交谈。", "MN001"};
+            return {"离开里幻瞑宫记忆殿堂。", "ev_Q14_BN06_1"};
+        }
+        if (w == "M19" && s == "1") return {"焚毁的琼华派：冲破烈火登上卷云台！", "ev_M19_1_1"};
+        if (w == "M19" && s == "2") {
+            if (m < 170000) return {"琼华卷云台终局决战：上前迎战玄霄与夙瑶，挽弓射日拯救天下苍生！", "ev_M19_2_2"};
+            return {"百年之后青鸾峰重逢——《仙剑奇侠传四》全四章大结局圆满通关！", "none"};
+        }
+        return {"探索当前场景并推进主线剧情。", ""};
+    }
 
     std::vector<Point3> ComputeNavMeshWaypoints(Point3 start, Point3 goal) const {
         const auto& h = *host_;
@@ -1512,6 +1918,7 @@ public:
                 h.game->Complete(tok);
                 if (using_real_cpk_) {
                     AdvanceUntilInteractive(900);
+                    (void)DrainCutsceneDialogs();
                 } else {
                     h.game->Tick(0.0, 10000, ScriptRunMode::until_wait);
                     ProcessPendingArenaLoad();
@@ -1644,6 +2051,12 @@ public:
             out << "\"visible\":false,\"text\":\"\"";
         }
         out << "},";
+
+        if (using_real_cpk_) {
+            const auto j = ComputeQuestJournal();
+            out << "\"journal\":{\"summary\":\"" << EscapeJson(j.summary)
+                << "\",\"waypoint\":\"" << EscapeJson(j.waypoint) << "\"},";
+        }
 
         out << "\"inventory\":{";
         out << "\"money\":" << (h.inventory ? h.inventory->Money() : 0) << ",";
@@ -3095,7 +3508,17 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
     }
     if (cmd == "interact") {
         const auto target = ExtractJsonString(line, "target").value_or("");
-        const std::string tag = engine.Interact(target);
+        const int repeat = std::clamp(
+            static_cast<int>(ExtractJsonNumber(line, "repeat").value_or(1)),
+            1, 120);
+        std::string tag;
+        for (int i = 0; i < repeat; ++i) {
+            std::string step_target = target;
+            if (repeat > 1 && target.starts_with("wine00")) {
+                step_target = "wine00" + std::to_string((i % 9) + 1);
+            }
+            tag = engine.Interact(step_target);
+        }
         return engine.ObserveJson(tag);
     }
     if (cmd == "use_item") {

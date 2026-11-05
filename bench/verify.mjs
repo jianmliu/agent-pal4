@@ -103,10 +103,17 @@ export async function verifyRunDir(runDir) {
   const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
   const log = readEpisodeLog(logPath);
   const mode = result.mode || log.start?.mode || "normal";
-  const host = new HostProcess(mode);
+  const realCpk = Boolean(result.realCpk || log.start?.realCpk);
+  const gameData = realCpk
+    ? process.env.AGENT_PAL4_GAME_DATA || "/Volumes/T7-Data/pal/pal4-data/仙剑奇侠传4/gamedata"
+    : "";
+  const host = new HostProcess(mode, gameData);
   const diffs = [];
 
   try {
+    if (realCpk) {
+      await host.send("set_time_scale", { scale: 30.0 });
+    }
     const init = await host.send("observe");
     if (
       log.start?.initial &&
@@ -194,6 +201,7 @@ export async function verifyRunDir(runDir) {
       runId,
       model: result.model,
       mode,
+      realCpk,
       toolCalls: log.calls.length,
       finalWorld: `${lastState.world}/${lastState.scene}`,
       gameCleared: Boolean(lastState.game_cleared),

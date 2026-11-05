@@ -1,0 +1,271 @@
+{
+  "ok": true,
+  "model": "agy-cli:claude-opus-5-5-high",
+  "mode": "pure",
+  "realCpk": true,
+  "toolCalls": 253,
+  "agentTurns": 23,
+  "durationMs": 260778,
+  "world": "M19",
+  "scene": "2",
+  "title": "卷云台",
+  "gameCleared": true,
+  "combat": {
+    "active": false,
+    "round": 1,
+    "victories": 18,
+    "world": "M19C",
+    "bgm": "P47",
+    "camera": "CA6",
+    "ground_camera": "CA13",
+    "vip_monster": 0,
+    "rng_draws": 123,
+    "last_log": "云天河施展仙术重创妖魔(2599)(-450 HP); 云天河施展仙术重创妖魔(2597)(-450 HP); 战斗胜利！敌方全员阵亡！",
+    "enemies": [
+      {
+        "slot": 0,
+        "id": 2599,
+        "name": "妖魔(2599)",
+        "hp": 0,
+        "max_hp": 450,
+        "health_state": 3
+      },
+      {
+        "slot": 1,
+        "id": 2597,
+        "name": "妖魔(2597)",
+        "hp": 0,
+        "max_hp": 450,
+        "health_state": 3
+      }
+    ]
+  },
+  "leader": {
+    "index": 0,
+    "actor_id": "Player-TIANHE",
+    "name": "云天河",
+    "position": [
+      864.36,
+      311.93,
+      961.77
+    ],
+    "rotation_yaw": 75.26,
+    "floor_triangle": 1159,
+    "control_enabled": false
+  },
+  "party": [
+    {
+      "index": 0,
+      "actor_id": "Player-TIANHE",
+      "name": "云天河",
+      "in_team": true,
+      "active": true,
+      "level": 1,
+      "hp": 210,
+      "mp": 0,
+      "rage": 100,
+      "favor_to_tianhe": 0,
+      "skills_count": 3,
+      "physical_attack": 34,
+      "equipment": [
+        2,
+        1
+      ]
+    },
+    {
+      "index": 1,
+      "actor_id": "Player-LINSHA",
+      "name": "韩菱纱",
+      "in_team": true,
+      "active": false,
+      "level": 2,
+      "hp": 170,
+      "mp": 5,
+      "rage": 100,
+      "favor_to_tianhe": 60,
+      "skills_count": 0,
+      "physical_attack": 20,
+      "equipment": [
+        3,
+        4
+      ]
+    },
+    {
+      "index": 2,
+      "actor_id": "Player-MENGLI",
+      "name": "柳梦璃",
+      "in_team": true,
+      "active": false,
+      "level": 53,
+      "hp": 120,
+      "mp": 115,
+      "rage": 100,
+      "favor_to_tianhe": 40,
+      "skills_count": 0,
+      "physical_attack": 265,
+      "equipment": [
+        13,
+        15,
+        14,
+        16
+      ]
+    },
+    {
+      "index": 3,
+      "actor_id": "Player-ZIYING",
+      "name": "慕容紫英",
+      "in_team": true,
+      "active": false,
+      "level": 36,
+      "hp": 190,
+      "mp": 10,
+      "rage": 100,
+      "favor_to_tianhe": 30,
+      "skills_count": 0,
+      "physical_attack": 212,
+      "equipment": [
+        9,
+        11,
+        10,
+        12
+      ]
+    }
+  ],
+  "inventory": {
+    "money": 3800,
+    "items": [
+      {
+        "id": 3103,
+        "name": "长弓",
+        "count": 1
+      },
+      {
+        "id": 3245,
+        "name": "牌位",
+        "count": 1
+      },
+      {
+        "id": 3246,
+        "name": "香炉",
+        "count": 1
+      },
+      {
+        "id": 3000,
+        "name": "止血草",
+        "count": 5
+      },
+      {
+        "id": 3006,
+        "name": "鼠儿果",
+        "count": 5
+      },
+      {
+        "id": 3096,
+        "name": "丁香",
+        "count": 15
+      },
+      {
+        "id": 3098,
+        "name": "没药",
+        "count": 15
+      },
+      {
+        "id": 3067,
+        "name": "土灵珠",
+        "count": 1
+      },
+      {
+        "id": 3106,
+        "name": "玉腰弓",
+        "count": 1
+      },
+      {
+        "id": 3012,
+        "name": "桂花芙蓉糕",
+        "count": 15
+      },
+      {
+        "id": 3018,
+        "name": "百枣银杏粥",
+        "count": 15
+      },
+      {
+        "id": 3095,
+        "name": "广藿香",
+        "count": 15
+      },
+      {
+        "id": 3097,
+        "name": "青木香",
+        "count": 15
+      },
+      {
+        "id": 3026,
+        "name": "菩提凝冰露",
+        "count": 5
+      },
+      {
+        "id": 3031,
+        "name": "天香续命露",
+        "count": 5
+      },
+      {
+        "id": 3212,
+        "name": "琼浆玉露",
+        "count": 3
+      },
+      {
+        "id": 3105,
+        "name": "灵光藻玉",
+        "count": 1
+      },
+      {
+        "id": 3249,
+        "name": "开元追月弓",
+        "count": 1
+      },
+      {
+        "id": 3112,
+        "name": "天河剑",
+        "count": 1
+      },
+      {
+        "id": 3113,
+        "name": "红魄",
+        "count": 1
+      },
+      {
+        "id": 3115,
+        "name": "后羿射日弓",
+        "count": 1
+      },
+      {
+        "id": 3116,
+        "name": "水灵珠",
+        "count": 1
+      },
+      {
+        "id": 3247,
+        "name": "香囊",
+        "count": 1
+      },
+      {
+        "id": 3107,
+        "name": "帝女翡翠",
+        "count": 1
+      }
+    ]
+  },
+  "gles3": {
+    "draw_calls": 236312,
+    "triangles": 9657202,
+    "buffers": 6998
+  },
+  "usage": {
+    "input_tokens": 68760,
+    "output_tokens": 8235,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 684481,
+    "total_tokens": 76995
+  }
+}

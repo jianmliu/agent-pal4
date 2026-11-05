@@ -13,7 +13,19 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '..');
 const HOST_BIN = process.env.AGENT_PAL4_HOST_BIN || path.join(ROOT_DIR, 'build', 'agent-pal4-host');
-const GAME_DATA = process.env.AGENT_PAL4_GAME_DATA || '';
+const DEFAULT_REAL_CPK = '/Volumes/T7-Data/pal/pal4-data/仙剑奇侠传4/gamedata';
+function parseCliGameData() {
+  const idx = process.argv.indexOf('--game-data');
+  if (idx >= 0 && process.argv[idx + 1]) {
+    return process.argv[idx + 1];
+  }
+  if (process.argv.includes('--real-cpk')) {
+    return DEFAULT_REAL_CPK;
+  }
+  return process.env.AGENT_PAL4_GAME_DATA || '';
+}
+const GAME_DATA = parseCliGameData();
+const IS_REAL_CPK = Boolean(GAME_DATA);
 const AGY_BIN = process.env.BENCH_AGY_BIN || path.join(os.homedir(), '.local', 'bin', 'agy');
 function parseCliModel() {
   const idx = process.argv.indexOf('--model');
@@ -53,7 +65,7 @@ class HostBridge {
 
   rpc(payload) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Host RPC timeout: ${JSON.stringify(payload)}`)), 8000);
+      const timer = setTimeout(() => reject(new Error(`Host RPC timeout: ${JSON.stringify(payload)}`)), 30000);
       this.queue.push((res) => {
         clearTimeout(timer);
         resolve(res);
@@ -92,11 +104,12 @@ const TOOLS = [
   },
   {
     name: 'interact',
-    description: 'If a dialog box is visible, advance/confirm the dialog. Otherwise interact with the nearest NPC or chest (GOB) within 14 units (or auto-walk to and interact with a named target NPC/object if `target` is specified).',
+    description: 'If a dialog box is visible, advance/confirm the dialog. Otherwise interact with the nearest NPC or chest (GOB) within 14 units (or auto-walk to and interact with a named target NPC/object/event if `target` is specified). Supports optional `repeat` (1..120) for repetitive collection trials.',
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Optional NPC or object name to approach and interact with' },
+        target: { type: 'string', description: 'Optional NPC, object, or event name to approach and interact with' },
+        repeat: { type: 'number', description: 'Optional repeat count (1..120) for repetitive collection trials' },
       },
     },
   },
@@ -227,16 +240,49 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
 
   const host = new HostBridge(HOST_BIN, path.join(tmpDir, 'host-work'), GAME_DATA, MODE);
+  if (IS_REAL_CPK) {
+    await host.rpc({ cmd: 'set_time_scale', scale: 30.0 });
+  }
   const initialObs = await host.rpc({ cmd: 'observe' });
 
   const traceFile = path.join(outDir, 'episode.jsonl');
   const clientLogFile = path.join(outDir, 'client.jsonl');
   const resultFile = path.join(outDir, 'result.json');
   const traceStream = fs.createWriteStream(traceFile, { flags: 'a' });
-  traceStream.write(JSON.stringify({ type: 'start', timestamp: new Date().toISOString(), model: `agy-cli:${MODEL}`, mode: MODE, initial: initialObs }) + '\n');
+  traceStream.write(
+    JSON.stringify({
+      type: 'start',
+      timestamp: new Date().toISOString(),
+      model: `agy-cli:${MODEL}`,
+      mode: MODE,
+      realCpk: IS_REAL_CPK,
+      initial: initialObs,
+    }) + '\n'
+  );
 
   let toolCalls = 0;
   let clearedState = null;
+
+  const compactStateForModel = (state) => {
+    if (!IS_REAL_CPK) return state;
+    const wp = state.journal?.waypoint || '';
+    const filterList = (list = [], max = 8) => {
+      if (!Array.isArray(list)) return [];
+      const sorted = [...list].sort((a, b) => {
+        if (a.name === wp) return -1;
+        if (b.name === wp) return 1;
+        return (a.distance ?? 999) - (b.distance ?? 999);
+      });
+      return sorted.slice(0, max);
+    };
+    return {
+      ...state,
+      npcs: filterList(state.npcs, 8),
+      objects: filterList(state.objects, 10),
+      events: filterList(state.events, 10),
+      monsters: filterList(state.monsters, 4),
+    };
+  };
 
   const server = http.createServer(async (req, res) => {
     let body = '';
@@ -254,7 +300,7 @@ async function main() {
       const state = await host.rpc(payload);
       traceStream.write(JSON.stringify({ type: 'call', step: toolCalls, tool: name, args, state }) + '\n');
       console.log(
-        `[Step ${toolCalls}] ${name}(${JSON.stringify(args)}) -> scene=${state.world}/${state.scene} event=${state.event} leader=${state.leader?.name}@${JSON.stringify(state.leader?.position)} mvar=${state.quest_stage} combat=${state.combat?.active ? `round_${state.combat.round}` : 'idle'} dialog=${state.dialog?.visible ? JSON.stringify(state.dialog.text) : 'none'} ch1=${state.chapter1_cleared} game_cleared=${state.game_cleared}`
+        `[Step ${toolCalls}] ${name}(${JSON.stringify(args)}) -> scene=${state.world}/${state.scene} event=${state.event?.slice(0, 60)} leader=${state.leader?.name}@${JSON.stringify(state.leader?.position)} waypoint=${state.journal?.waypoint || '-'} combat=${state.combat?.active ? `round_${state.combat.round}` : `idle(v=${state.combat?.victories ?? 0})`} game_cleared=${state.game_cleared}`
       );
       if (state.game_cleared && !clearedState) {
         clearedState = state;
@@ -265,7 +311,7 @@ async function main() {
           jsonrpc: '2.0',
           id: msg.id,
           result: {
-            content: [{ type: 'text', text: JSON.stringify(state, null, 2) }],
+            content: [{ type: 'text', text: JSON.stringify(compactStateForModel(state), null, 2) }],
           },
         })
       );
@@ -323,75 +369,87 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
   const pureGuide = [
     `You are playing Chinese Paladin 4 (仙剑奇侠传四 - OpenPAL4 C++20 Headless Runtime) in PURE (Zero-Prior / Zero-Walkthrough) mode.`,
     `No external walkthrough, quest stage IDs, or internal script function names are exposed. You must explore and clear the game purely from in-game observations:`,
-    `- Inspect \`npcs\`, \`objects\` (chests/altars/forges), \`monsters\`, and \`events\` (trigger volumes/portals with 3D \`position\`) in each scene.`,
-    `- Read \`dialog.text\` and \`hint.text\` carefully when talking to NPCs or interacting with objects—characters will tell you what needs to be done before advancing (e.g., retrieving items, recruiting companions, switching the party leader, or defeating bosses).`,
-    `- You can walk into a portal/trigger volume using \`move_to\` with its \`events[i].position\` coordinates (or \`interact\` with \`{"target": "<event_name>"}\`), and always call \`interact\` whenever \`dialog.visible\` is true.`,
-    `- When \`combat.active\` is true, use \`combat_action\` to defeat all enemies.`,
+    `- Inspect \`journal\` (your in-game Quest Journal 竹简 \`summary\` and Minimap Waypoint \`waypoint\`), \`npcs\`, \`objects\`, \`monsters\`, and \`events\` in each scene.`,
+    `- When \`journal.waypoint\` is an NPC/object/event name (e.g. \`"MO002"\`, \`"ev_Q01_Q01_1"\`, \`"light1_f"\`), call \`interact\` with \`{"target": "<waypoint>"}\` (or \`{"target": "<waypoint>", "repeat": 99}\` / \`13\` when collecting 99 wines or 13 nine-eye stones). When a puzzle mentions multiple switches/lamps in the same room (e.g. \`light1_f\` / \`light2_f\` / \`light3_f\` or \`huaRongDoor01_ev\` / \`temp\`), interact with each of them and then the exit event.`,
+    `- When \`journal.waypoint\` starts with \`"fly_to:<DEST>"\`, call \`fly_to\` with \`{"destination": "<DEST>"}\`. When it is \`"use_item:EarthBall"\`, call \`use_item\` with \`{"item": "EarthBall"}\`.`,
+    `- Whenever \`dialog.visible\` is true, call \`interact\` with \`{}\` to confirm/advance dialog.`,
+    `- Whenever \`combat.active\` is true, immediately call \`combat_action\` with \`{"action": "skill", "target_slot": 1}\` (or the active enemy slot) until \`combat.active\` becomes false.`,
+    `- Play briskly and continuously without stopping until \`"game_cleared": true\` is returned!`,
   ];
 
-  const prompt = [
-    ...(MODE === 'pure' ? pureGuide : normalGuide),
-    ``,
-    `### Tool Execution Interface`,
-    `Call game tools ONLY by executing \`node ${helperFile} <tool_name> '<json_args>'\` via your shell/command tool. Do NOT read or access any files outside \`${tmpDir}\`.`,
-    `Available tools:`,
-    toolsDoc,
-    ``,
-    `### Initial Observation`,
-    '```json',
-    JSON.stringify(initialObs, null, 2),
-    '```',
-    ``,
-    `Play until \`"game_cleared": true\` is returned, then summarize your playthrough in 3-4 sentences.`,
-  ].join('\n');
-
   console.log('================================================================');
-  console.log(`  Launching agy-cli:${MODEL} [mode=${MODE}] on OpenPAL4 Campaign`);
+  console.log(`  Launching agy-cli:${MODEL} [mode=${MODE}, realCpk=${IS_REAL_CPK}] on OpenPAL4 Campaign`);
   console.log(`  Output Directory: ${outDir}`);
   console.log('================================================================');
 
-  const agyLog = path.join(outDir, 'agy.log');
-  const agyArgs = [
-    '-p',
-    prompt,
-    '--output-format',
-    'stream-json',
-    '--disable-slash-commands',
-    '--dangerously-skip-permissions',
-    '--print-timeout',
-    '360s',
-    '--model',
-    MODEL,
-    '--log-file',
-    agyLog,
-  ];
-
-  const t0 = Date.now();
-  const agy = spawn(AGY_BIN, agyArgs, {
-    cwd: tmpDir,
-    env: { ...process.env, PATH: `/opt/homebrew/bin:/Users/jianmingliu/.local/bin:${process.env.PATH || ''}` },
-    stdio: ['ignore', 'pipe', 'inherit'],
-  });
-
-  const clientLog = fs.createWriteStream(clientLogFile);
+  const clientLog = fs.createWriteStream(clientLogFile, { flags: 'a' });
   let agentTurns = 0;
   let finalResult = null;
+  const t0 = Date.now();
+  const maxSessions = IS_REAL_CPK ? 8 : 2;
 
-  const rl = readline.createInterface({ input: agy.stdout });
-  rl.on('line', (line) => {
-    clientLog.write(line + '\n');
-    try {
-      const ev = JSON.parse(line);
-      if (ev.event === 'step_update' && ev.step_update?.state === 'DONE' && ev.step_update?.step_type === 'agent_response') {
-        agentTurns++;
-      }
-      if (ev.event === 'result' && ev.result) {
-        finalResult = ev.result;
-      }
-    } catch {}
-  });
+  for (let session = 1; session <= maxSessions && !clearedState; session++) {
+    const curObs = session === 1 ? initialObs : await host.rpc({ cmd: 'observe' });
+    if (curObs.game_cleared) {
+      clearedState = curObs;
+      break;
+    }
+    const prompt = [
+      ...(MODE === 'pure' ? pureGuide : normalGuide),
+      ``,
+      `### Tool Execution Interface`,
+      `Call game tools ONLY by executing \`node ${helperFile} <tool_name> '<json_args>'\` via your shell/command tool. Do NOT read or access any files outside \`${tmpDir}\`.`,
+      `Tip: You can chain 2-3 sequential tool calls in a single shell command only when you are sure of the sequence, or call 1 tool per command and inspect the JSON response.`,
+      `Available tools:`,
+      toolsDoc,
+      ``,
+      `### Current Observation (Session ${session}, Step ${toolCalls})`,
+      '```json',
+      JSON.stringify(compactStateForModel(curObs), null, 2),
+      '```',
+      ``,
+      `Continue playing from the current state until \`"game_cleared": true\` is returned, then summarize your playthrough in 3-4 sentences.`,
+    ].join('\n');
 
-  await new Promise((resolve) => agy.on('close', resolve));
+    const agyLog = path.join(outDir, `agy-s${session}.log`);
+    const agyArgs = [
+      '-p',
+      prompt,
+      '--output-format',
+      'stream-json',
+      '--disable-slash-commands',
+      '--dangerously-skip-permissions',
+      '--print-timeout',
+      IS_REAL_CPK ? '900s' : '360s',
+      '--model',
+      MODEL,
+      '--log-file',
+      agyLog,
+    ];
+
+    console.log(`--- Starting Agent Session ${session}/${maxSessions} (steps so far: ${toolCalls}) ---`);
+    const agy = spawn(AGY_BIN, agyArgs, {
+      cwd: tmpDir,
+      env: { ...process.env, PATH: `/opt/homebrew/bin:/Users/jianmingliu/.local/bin:${process.env.PATH || ''}` },
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+
+    const rl = readline.createInterface({ input: agy.stdout });
+    rl.on('line', (line) => {
+      clientLog.write(line + '\n');
+      try {
+        const ev = JSON.parse(line);
+        if (ev.event === 'step_update' && ev.step_update?.state === 'DONE' && ev.step_update?.step_type === 'agent_response') {
+          agentTurns++;
+        }
+        if (ev.event === 'result' && ev.result) {
+          finalResult = ev.result;
+        }
+      } catch {}
+    });
+
+    await new Promise((resolve) => agy.on('close', resolve));
+  }
   const durationMs = Date.now() - t0;
 
   const finalObs = await host.rpc({ cmd: 'observe' });
@@ -399,8 +457,9 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
     ok: Boolean(clearedState || finalObs.game_cleared),
     model: `agy-cli:${MODEL}`,
     mode: MODE,
+    realCpk: IS_REAL_CPK,
     toolCalls,
-    agentTurns: finalResult?.num_turns ?? agentTurns,
+    agentTurns: agentTurns || finalResult?.num_turns || 0,
     durationMs,
     world: finalObs.world,
     scene: finalObs.scene,

@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "state": "verified",
+  "runId": "argon-20261105T052556",
+  "model": "agy-cli:gemini-4-argon-medium",
+  "mode": "pure",
+  "realCpk": true,
+  "toolCalls": 296,
+  "finalWorld": "M19/2",
+  "gameCleared": true,
+  "victories": 18,
+  "episodeDigest": "80db7e8ccd9afcda0d3f1503c0c006ffd0bd6250ec73a9183cb763e3ed6b82a3",
+  "verifiedAt": "2026-11-05T06:20:07.338Z",
+  "diffs": []
+}
