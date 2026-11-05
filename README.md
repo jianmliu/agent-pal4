@@ -105,7 +105,20 @@ npm run bench:run
 npm run bench:verify
 # or: node bench/verify.mjs
 
-# 3. Generate self-contained static HTML leaderboard (bench/out/board.html & web/board.html)
+# 3. Render 3D software-rasterized key frames + NavMesh running sub-step frames (834 frames)
+node bench/render-frames.mjs
+
+# 4. Generate self-contained static HTML leaderboard & 3D Interactive Replay Player
+#    Outputs: bench/out/board.html, web/board.html, web/replay.html
 npm run bench:board
 # or: node bench/board.mjs
 ```
+
+### 4. Interactive 3D Web Replay Player (`web/replay.html`)
+
+- **Standalone Replay Player**: [`web/replay.html`](web/replay.html) (and embedded in [`web/board.html#replay`](web/board.html))
+- **834 Software-Rasterized Retail 3D Frames**: Includes **225 step-end 3D frames** + **609 NavMesh sub-step 3D skeletal running (`C02`) sequence frames** (`web/frames/`) rendered directly from original retail `.cpk` world meshes, lightmaps, skyboxes, `.gob` props, NPCs, monsters, and character models via `headless_gles3.cpp` (`render_frame` & `render_substeps`).
+- **3 View Modes**:
+  1. **🎮 3D 实机渲染 + 2D 雷达小窗 (PiP)**
+  2. **🖼️ 纯享原版 3D 实机画面**
+  3. **🧭 全屏 2D 战术导航雷达**
