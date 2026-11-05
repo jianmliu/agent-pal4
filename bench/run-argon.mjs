@@ -15,7 +15,15 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const HOST_BIN = process.env.AGENT_PAL4_HOST_BIN || path.join(ROOT_DIR, 'build', 'agent-pal4-host');
 const GAME_DATA = process.env.AGENT_PAL4_GAME_DATA || '';
 const AGY_BIN = process.env.BENCH_AGY_BIN || path.join(os.homedir(), '.local', 'bin', 'agy');
-const MODEL = process.env.BENCH_MODEL || 'gemini-4-argon-medium';
+function parseCliModel() {
+  const idx = process.argv.indexOf('--model');
+  if (idx >= 0 && process.argv[idx + 1]) {
+    return process.argv[idx + 1];
+  }
+  return process.env.BENCH_MODEL || 'gemini-4-argon-medium';
+}
+
+const MODEL = parseCliModel();
 
 function parseCliMode() {
   const idx = process.argv.indexOf('--mode');
@@ -207,7 +215,14 @@ async function main() {
   }
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '');
-  const outDir = path.join(ROOT_DIR, 'bench', 'out', `argon-${stamp}`);
+  const prefix = MODEL.includes('opus')
+    ? 'opus'
+    : MODEL.includes('sonnet')
+      ? 'sonnet'
+      : MODEL.includes('flash')
+        ? 'flash'
+        : 'argon';
+  const outDir = path.join(ROOT_DIR, 'bench', 'out', `${prefix}-${stamp}`);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pal4-argon-'));
   fs.mkdirSync(outDir, { recursive: true });
 

@@ -264,7 +264,7 @@
 
   <nav class="tabs-nav" aria-label="排行榜视图切换">
     <label for="tab-stats">🏠 基准总览与排行榜</label>
-    <label for="tab-campaigns">壹 · Pure vs Normal 自主通关榜 (4)</label>
+    <label for="tab-campaigns">壹 · Pure vs Normal 自主通关榜 (5)</label>
     <label for="tab-cpk">贰 · 原版 CPK 全四章 24 关主线矩阵</label>
     <label for="tab-verify">叁 · 引擎架构与重放核验</label>
   </nav>
@@ -320,7 +320,7 @@
         <div class="s">零 <code>script_error</code> · 零 <code>unhandled_calls</code></div>
       </div>
       <div class="kpi">
-        <div class="v">4 / 4 局</div>
+        <div class="v">5 / 5 局</div>
         <div class="l">确定性重放核验通过</div>
         <div class="s"><code>node bench/verify.mjs</code> SHA-256 签名一致</div>
       </div>
@@ -339,23 +339,23 @@
         </div>
       </div>
       <div class="pod silver">
-        <div class="medal">🥈 榜眼 · Normal 标准模式全四章自主通关</div>
+        <div class="medal">🥈 榜眼 · Pure 纯净模式全四章自主通关 (最快墙钟耗时)</div>
+        <div class="name">claude-opus-5-5-high</div>
+        <div class="score">100% 通关 · 44 步</div>
+        <div class="meta">
+          <span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span> <span class="vbadge ok" title="确定性重放核验通过 · SHA-256: e2b54a1cae43d640…">已核验 ✓</span><br>
+          终局：<code>M20/1</code> (琼华飞升·卷云台决战) · 全员 Lv.50 · 3 场 Boss 战全胜<br>
+          Token：69.6k · 耗时：<strong>107.4s</strong> · 自主运用 <code>save_checkpoint</code>
+        </div>
+      </div>
+      <div class="pod bronze">
+        <div class="medal">🥉 探花 · Normal 标准模式全四章自主通关</div>
         <div class="name">gemini-4-argon-medium</div>
         <div class="score">100% 通关 · 48 步</div>
         <div class="meta">
           <span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span> <span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 7903cba5ebc115cb…">已核验 ✓</span><br>
           终局：<code>M20/1</code> (琼华飞升·卷云台决战) · 全员 Lv.50 · 3 场 Boss 战全胜<br>
           Token：58.9k · 耗时：131.1s · 渲染：221 DrawCalls
-        </div>
-      </div>
-      <div class="pod bronze">
-        <div class="medal">🥉 探花 · 原版零售 CPK 全四章 24 关全链路</div>
-        <div class="name">OpenPAL4 Real-CPK Verifier</div>
-        <div class="score">100% 通关 · 24 / 24 关</div>
-        <div class="meta">
-          <span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span> <span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span> <span class="vbadge ok">已核验 ✓</span><br>
-          覆盖原版 <code>script.cpk</code> 全部 43 个 <code>.csb</code> 模块 (<code>mvar 10100 → 170000</code>)<br>
-          从青鸾峰清晨上香、淮南王陵、须臾幻境 99 酒试炼、鬼界、幻瞑界直至卷云台挽弓射日大结局
         </div>
       </div>
     </div>
@@ -379,7 +379,7 @@
         </thead>
         <tbody>
           <tr>
-            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Pure)</div></td>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Pure · 36 steps)</div></td>
             <td><span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span></td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
@@ -391,7 +391,19 @@
             <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 724fad874ef10ab0…">已核验 ✓</span></td>
           </tr>
           <tr>
-            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Normal)</div></td>
+            <td><div class="mname">claude-opus-5-5-high</div><div class="sub">Full 4-Chapter Campaign (Pure · 44 steps · 107.4s)</div></td>
+            <td><span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span></td>
+            <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num"><strong>81.8%</strong> (44步)</td>
+            <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: e2b54a1cae43d640…">已核验 ✓</span></td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Normal · 48 steps)</div></td>
             <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
@@ -437,7 +449,7 @@
         <svg viewBox="0 0 580 300" class="scatter" role="img" aria-label="通关进度与工具调用步数帕累托前沿图">
     <line x1="56" y1="258.0" x2="550" y2="258.0" class="grid"/><text x="48" y="262" class="ax" text-anchor="end">0%</text><line x1="56" y1="202.8" x2="550" y2="202.8" class="grid"/><text x="48" y="206.8" class="ax" text-anchor="end">25%</text><line x1="56" y1="147.5" x2="550" y2="147.5" class="grid"/><text x="48" y="151.5" class="ax" text-anchor="end">50%</text><line x1="56" y1="92.3" x2="550" y2="92.3" class="grid"/><text x="48" y="96.3" class="ax" text-anchor="end">75%</text><line x1="56" y1="37.0" x2="550" y2="37.0" class="grid"/><text x="48" y="41" class="ax" text-anchor="end">100%</text><line x1="56.0" y1="26" x2="56.0" y2="258" class="grid"/><text x="56.0" y="274" class="ax" text-anchor="middle">0步</text><line x1="138.3" y1="26" x2="138.3" y2="258" class="grid"/><text x="138.3" y="274" class="ax" text-anchor="middle">10步</text><line x1="220.7" y1="26" x2="220.7" y2="258" class="grid"/><text x="220.7" y="274" class="ax" text-anchor="middle">20步</text><line x1="303.0" y1="26" x2="303.0" y2="258" class="grid"/><text x="303.0" y="274" class="ax" text-anchor="middle">30步</text><line x1="385.3" y1="26" x2="385.3" y2="258" class="grid"/><text x="385.3" y="274" class="ax" text-anchor="middle">40步</text><line x1="467.7" y1="26" x2="467.7" y2="258" class="grid"/><text x="467.7" y="274" class="ax" text-anchor="middle">50步</text><line x1="550.0" y1="26" x2="550.0" y2="258" class="grid"/><text x="550.0" y="274" class="ax" text-anchor="middle">60步</text>
     <polyline fill="none" stroke="var(--seal)" stroke-width="2" stroke-dasharray="5,4" points="130.1,202.8 237.1,147.5 352.4,37.0"/>
-    <g class="pt"><circle cx="352.4" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [PURE] (36步, 100%)</title></circle><text x="352.4" y="27" text-anchor="middle">PURE · 36步</text></g><g class="pt"><circle cx="451.2" cy="37.0" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (48步, 100%)</title></circle><text x="451.2" y="52" text-anchor="middle">NORMAL · 48步</text></g><g class="pt"><circle cx="237.1" cy="147.5" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (22步, 50%)</title></circle><text x="237.1" y="137.5" text-anchor="middle">NORMAL · 22步</text></g><g class="pt"><circle cx="130.1" cy="202.8" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (9步, 25%)</title></circle><text x="130.1" y="217.8" text-anchor="middle">NORMAL · 9步</text></g>
+    <g class="pt"><circle cx="352.4" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [PURE] (36步, 100%)</title></circle><text x="352.4" y="27" text-anchor="middle">Argon PURE · 36步</text></g><g class="pt"><circle cx="418.3" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>claude-opus-5-5-high [PURE] (44步, 100%)</title></circle><text x="418.3" y="52" text-anchor="middle">Opus-5.5 PURE · 44步</text></g><g class="pt"><circle cx="451.2" cy="37.0" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (48步, 100%)</title></circle><text x="451.2" y="27" text-anchor="middle">Argon NORMAL · 48步</text></g><g class="pt"><circle cx="237.1" cy="147.5" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (22步, 50%)</title></circle><text x="237.1" y="162.5" text-anchor="middle">Argon NORMAL · 22步</text></g><g class="pt"><circle cx="130.1" cy="202.8" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (9步, 25%)</title></circle><text x="130.1" y="192.8" text-anchor="middle">Argon NORMAL · 9步</text></g>
     <text x="303" y="294" class="ax-title" text-anchor="middle">工具调用步数 (Tool Calls，越少越优 → 左上为帕累托前沿)</text>
     <text x="16" y="142" class="ax-title" text-anchor="middle" transform="rotate(-90 16 142)">战役通关进度 (%)</text>
   </svg>
@@ -446,7 +458,7 @@
         <h3>通关进度 (%) × 总 Token 消耗 (Total Tokens)</h3>
         <svg viewBox="0 0 580 300" class="scatter" role="img" aria-label="通关进度与Token消耗散点图">
     <line x1="56" y1="258.0" x2="550" y2="258.0" class="grid"/><text x="48" y="262" class="ax" text-anchor="end">0%</text><line x1="56" y1="202.8" x2="550" y2="202.8" class="grid"/><text x="48" y="206.8" class="ax" text-anchor="end">25%</text><line x1="56" y1="147.5" x2="550" y2="147.5" class="grid"/><text x="48" y="151.5" class="ax" text-anchor="end">50%</text><line x1="56" y1="92.3" x2="550" y2="92.3" class="grid"/><text x="48" y="96.3" class="ax" text-anchor="end">75%</text><line x1="56" y1="37.0" x2="550" y2="37.0" class="grid"/><text x="48" y="41" class="ax" text-anchor="end">100%</text><line x1="56.0" y1="26" x2="56.0" y2="258" class="grid"/><text x="56.0" y="274" class="ax" text-anchor="middle">0k</text><line x1="154.8" y1="26" x2="154.8" y2="258" class="grid"/><text x="154.8" y="274" class="ax" text-anchor="middle">20k</text><line x1="253.6" y1="26" x2="253.6" y2="258" class="grid"/><text x="253.6" y="274" class="ax" text-anchor="middle">40k</text><line x1="352.4" y1="26" x2="352.4" y2="258" class="grid"/><text x="352.4" y="274" class="ax" text-anchor="middle">60k</text><line x1="451.2" y1="26" x2="451.2" y2="258" class="grid"/><text x="451.2" y="274" class="ax" text-anchor="middle">80k</text><line x1="550.0" y1="26" x2="550.0" y2="258" class="grid"/><text x="550.0" y="274" class="ax" text-anchor="middle">100k</text>
-    <g class="pt"><circle cx="497.4" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [pure] · 89.3k tokens · 159.6s</title></circle><text x="497.4" y="27" text-anchor="middle">PURE · 89.3k</text></g><g class="pt"><circle cx="347.1" cy="37.0" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 58.9k tokens · 131.1s</title></circle><text x="347.1" y="52" text-anchor="middle">NORMAL · 58.9k</text></g><g class="pt"><circle cx="190.6" cy="147.5" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 27.2k tokens · 51.9s</title></circle><text x="190.6" y="137.5" text-anchor="middle">NORMAL · 27.2k</text></g><g class="pt"><circle cx="228.9" cy="202.8" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 35.0k tokens · 74.5s</title></circle><text x="228.9" y="217.8" text-anchor="middle">NORMAL · 35.0k</text></g>
+    <g class="pt"><circle cx="497.4" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [pure] · 89.3k tokens · 159.6s</title></circle><text x="497.4" y="27" text-anchor="middle">Argon PURE · 89.3k</text></g><g class="pt"><circle cx="400.0" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>claude-opus-5-5-high [pure] · 69.6k tokens · 107.4s</title></circle><text x="400.0" y="52" text-anchor="middle">Opus-5.5 PURE · 69.6k</text></g><g class="pt"><circle cx="347.1" cy="37.0" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 58.9k tokens · 131.1s</title></circle><text x="347.1" y="27" text-anchor="middle">Argon NORMAL · 58.9k</text></g><g class="pt"><circle cx="190.6" cy="147.5" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 27.2k tokens · 51.9s</title></circle><text x="190.6" y="162.5" text-anchor="middle">Argon NORMAL · 27.2k</text></g><g class="pt"><circle cx="228.9" cy="202.8" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 35.0k tokens · 74.5s</title></circle><text x="228.9" y="192.8" text-anchor="middle">Argon NORMAL · 35.0k</text></g>
     <text x="303" y="294" class="ax-title" text-anchor="middle">总 Token 消耗 (Total Tokens，含上下文推理)</text>
     <text x="16" y="142" class="ax-title" text-anchor="middle" transform="rotate(-90 16 142)">战役通关进度 (%)</text>
   </svg>
@@ -494,6 +506,25 @@
 <tr>
       <td class="rank">2</td>
       <td>
+        <div class="mname">claude-opus-5-5-high</div>
+        <div class="sub"><code>agy-cli</code> · <code>opus-20261105T041624</code></div>
+      </td>
+      <td><span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span></td>
+      <td>
+        <strong>全四章终局通关 (Act I–IV)</strong>
+        <div class="sub">终局场景：<code>M20/1</code> (琼华飞升·卷云台决战)</div>
+      </td>
+      <td class="num"><strong style="color:var(--ok)">100%</strong></td>
+      <td class="num"><strong>44</strong> 步</td>
+      <td class="num">3 胜 · Lv.50</td>
+      <td class="num">47 DC / 94 Tri</td>
+      <td class="num">69.6k<div class="sub">缓存 754.8k</div></td>
+      <td class="num">107.4s</td>
+      <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: e2b54a1cae43d640…">已核验 ✓</span></td>
+    </tr>
+<tr>
+      <td class="rank">3</td>
+      <td>
         <div class="mname">gemini-4-argon-medium</div>
         <div class="sub"><code>agy-cli</code> · <code>argon-20261103T204552</code></div>
       </td>
@@ -511,7 +542,7 @@
       <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 7903cba5ebc115cb…">已核验 ✓</span></td>
     </tr>
 <tr>
-      <td class="rank">3</td>
+      <td class="rank">4</td>
       <td>
         <div class="mname">gemini-4-argon-medium</div>
         <div class="sub"><code>agy-cli</code> · <code>argon-20261103T201924</code></div>
@@ -530,7 +561,7 @@
       <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 5680d5c70badab64…">已核验 ✓</span></td>
     </tr>
 <tr>
-      <td class="rank">4</td>
+      <td class="rank">5</td>
       <td>
         <div class="mname">gemini-4-argon-medium</div>
         <div class="sub"><code>agy-cli</code> · <code>argon-20261103T194927</code></div>

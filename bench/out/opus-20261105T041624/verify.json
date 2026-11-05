@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "state": "verified",
+  "runId": "opus-20261105T041624",
+  "model": "agy-cli:claude-opus-5-5-high",
+  "mode": "pure",
+  "toolCalls": 44,
+  "finalWorld": "M20/1",
+  "gameCleared": true,
+  "victories": 3,
+  "episodeDigest": "e2b54a1cae43d6401ab3d07fc771c1c660b0870ab7e63e9cce3f304ef0ede3dc",
+  "verifiedAt": "2026-11-05T04:20:20.001Z",
+  "diffs": []
+}

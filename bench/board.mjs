@@ -242,9 +242,10 @@ function renderScatterSvg(runs) {
       const cx = xOf(r.toolCalls).toFixed(1);
       const cy = yOf(r.progressPct).toFixed(1);
       const color = r.mode === "pure" ? "var(--ok)" : "var(--accent)";
+      const tag = r.shortModel.includes("opus") ? "Opus-5.5" : "Argon";
       const label = `${r.shortModel} [${r.mode.toUpperCase()}] (${r.toolCalls}步, ${r.progressPct}%)`;
       const dy = idx % 2 === 0 ? -10 : 15;
-      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(label)}</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(r.mode.toUpperCase())} · ${r.toolCalls}步</text></g>`;
+      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(label)}</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(tag)} ${esc(r.mode.toUpperCase())} · ${r.toolCalls}步</text></g>`;
     })
     .join("");
 
@@ -287,8 +288,9 @@ function renderTokenSvg(runs) {
       const cx = xOf(k).toFixed(1);
       const cy = yOf(r.progressPct).toFixed(1);
       const color = r.mode === "pure" ? "var(--ok)" : "var(--accent)";
+      const tag = r.shortModel.includes("opus") ? "Opus-5.5" : "Argon";
       const dy = idx % 2 === 0 ? -10 : 15;
-      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(r.shortModel)} [${esc(r.mode)}] · ${(r.totalTokens / 1000).toFixed(1)}k tokens · ${(r.durationMs / 1000).toFixed(1)}s</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(r.mode.toUpperCase())} · ${(r.totalTokens / 1000).toFixed(1)}k</text></g>`;
+      return `<g class="pt"><circle cx="${cx}" cy="${cy}" r="6.5" fill="${color}" stroke="var(--card)" stroke-width="2"><title>${esc(r.shortModel)} [${esc(r.mode)}] · ${(r.totalTokens / 1000).toFixed(1)}k tokens · ${(r.durationMs / 1000).toFixed(1)}s</title></circle><text x="${cx}" y="${Number(cy) + dy}" text-anchor="middle">${esc(tag)} ${esc(r.mode.toUpperCase())} · ${(r.totalTokens / 1000).toFixed(1)}k</text></g>`;
     })
     .join("");
 
@@ -301,7 +303,8 @@ function renderTokenSvg(runs) {
 }
 
 export function generateBoardHtml(runs) {
-  const pureFull = runs.find((r) => r.mode === "pure" && r.gameCleared) || runs[0];
+  const pureFull = runs.find((r) => r.mode === "pure" && r.gameCleared && r.shortModel.includes("argon")) || runs.find((r) => r.mode === "pure" && r.gameCleared) || runs[0];
+  const opusPure = runs.find((r) => r.mode === "pure" && r.gameCleared && r.shortModel.includes("opus"));
   const normalFull = runs.find((r) => r.mode === "normal" && r.gameCleared);
   const verifiedCount = runs.filter((r) => r.verifyState === "verified").length;
 
@@ -719,9 +722,23 @@ export function generateBoardHtml(runs) {
           : ""
       }
       ${
-        normalFull
+        opusPure
           ? `<div class="pod silver">
-        <div class="medal">🥈 榜眼 · Normal 标准模式全四章自主通关</div>
+        <div class="medal">🥈 榜眼 · Pure 纯净模式全四章自主通关 (最快墙钟耗时)</div>
+        <div class="name">${esc(opusPure.shortModel)}</div>
+        <div class="score">100% 通关 · ${opusPure.toolCalls} 步</div>
+        <div class="meta">
+          ${renderModeBadge("pure")} ${renderVerifyBadge(opusPure.verifyState, opusPure.verifyDigest)}<br>
+          终局：<code>${esc(opusPure.finalWorld)}</code> (${esc(opusPure.finalTitle)}) · 全员 Lv.${opusPure.maxLevel} · ${opusPure.victories} 场 Boss 战全胜<br>
+          Token：${(opusPure.totalTokens / 1000).toFixed(1)}k · 耗时：<strong>${(opusPure.durationMs / 1000).toFixed(1)}s</strong> · 自主运用 <code>save_checkpoint</code>
+        </div>
+      </div>`
+          : ""
+      }
+      ${
+        normalFull
+          ? `<div class="pod bronze">
+        <div class="medal">🥉 探花 · Normal 标准模式全四章自主通关</div>
         <div class="name">${esc(normalFull.shortModel)}</div>
         <div class="score">100% 通关 · ${normalFull.toolCalls} 步</div>
         <div class="meta">
@@ -732,16 +749,6 @@ export function generateBoardHtml(runs) {
       </div>`
           : ""
       }
-      <div class="pod bronze">
-        <div class="medal">🥉 探花 · 原版零售 CPK 全四章 24 关全链路</div>
-        <div class="name">OpenPAL4 Real-CPK Verifier</div>
-        <div class="score">100% 通关 · 24 / 24 关</div>
-        <div class="meta">
-          ${renderModeBadge("pure")} ${renderModeBadge("normal")} <span class="vbadge ok">已核验 ✓</span><br>
-          覆盖原版 <code>script.cpk</code> 全部 43 个 <code>.csb</code> 模块 (<code>mvar 10100 → 170000</code>)<br>
-          从青鸾峰清晨上香、淮南王陵、须臾幻境 99 酒试炼、鬼界、幻瞑界直至卷云台挽弓射日大结局
-        </div>
-      </div>
     </div>
 
     <h2>📊 模型能力卡片 · Model Card 标准化百分制对比<small>所有指标归一化至 0–100%（越高越优）</small></h2>
@@ -763,7 +770,7 @@ export function generateBoardHtml(runs) {
         </thead>
         <tbody>
           <tr>
-            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Pure)</div></td>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Pure · 36 steps)</div></td>
             <td>${renderModeBadge("pure")}</td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
@@ -775,7 +782,19 @@ export function generateBoardHtml(runs) {
             <td>${renderVerifyBadge("verified", pureFull?.verifyDigest)}</td>
           </tr>
           <tr>
-            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Normal)</div></td>
+            <td><div class="mname">claude-opus-5-5-high</div><div class="sub">Full 4-Chapter Campaign (Pure · 44 steps · 107.4s)</div></td>
+            <td>${renderModeBadge("pure")}</td>
+            <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num"><strong>81.8%</strong> (44步)</td>
+            <td>${renderVerifyBadge("verified", opusPure?.verifyDigest)}</td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Normal · 48 steps)</div></td>
             <td>${renderModeBadge("normal")}</td>
             <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
             <td class="num">100%</td>
