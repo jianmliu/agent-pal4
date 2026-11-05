@@ -141,6 +141,7 @@ export function loadRuns(root = OUT_ROOT) {
       totalTokens: result.usage?.total_tokens ?? 0,
       verifyState,
       verifyDigest,
+      initial: log.start?.initial || null,
       calls: log.calls,
     });
   }
@@ -153,6 +154,123 @@ export function loadRuns(root = OUT_ROOT) {
     return a.toolCalls - b.toolCalls;
   });
   return runs;
+}
+
+/** 将所有运行的完整轨迹压缩为自包含的增量回放数据包（供前端回放器零延迟加载） */
+function buildCompactReplayRuns(runs) {
+  return runs.map((r) => {
+    let prevScKey = "",
+      prevInvKey = "",
+      prevPtyKey = "";
+    const rawSteps = [
+      ...(r.initial ? [{ step: 0, tool: "init", args: {}, state: r.initial }] : []),
+      ...(r.calls || []).map((c) => ({
+        step: c.step,
+        tool: c.tool,
+        args: c.args || {},
+        state: c.state || {},
+      })),
+    ];
+    const steps = rawSteps.map((s) => {
+      const st = s.state || {};
+      const scKey = `${st.world || ""}/${st.scene || ""}`;
+      const pty = (st.party || [])
+        .filter((p) => p.in_team)
+        .map((p) => ({
+          n: p.name,
+          lv: p.level || 1,
+          hp: p.hp ?? 0,
+          mhp: p.max_hp || 1,
+          mp: p.mp ?? 0,
+          mmp: p.max_mp || 1,
+        }));
+      const ptyKey = JSON.stringify(pty);
+      const inv = {
+        m: st.inventory?.money || 0,
+        it: (st.inventory?.items || []).slice(0, 18).map((i) => `${i.name}×${i.count}`),
+      };
+      const invKey = JSON.stringify(inv);
+      const out = {
+        step: s.step,
+        tool: s.tool,
+        args: s.args,
+        ok: st.ok !== false,
+        ev: String(st.event || st.error || "").slice(0, 520),
+        frame: st.frame || 0,
+        w: st.world || "",
+        sc: st.scene || "",
+        title: st.title || "",
+        clr: Boolean(st.game_cleared),
+        ldr: st.leader
+          ? {
+              n: st.leader.name || "云天河",
+              p: (st.leader.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+              yaw: Math.round(Number(st.leader.rotation_yaw) || 0),
+            }
+          : null,
+        j: st.journal ? { s: st.journal.summary || "", wp: st.journal.waypoint || "" } : null,
+        dlg: st.dialog?.visible ? String(st.dialog.text || "").slice(0, 360) : "",
+        cbt: st.combat
+          ? {
+              act: Boolean(st.combat.active),
+              v: st.combat.victories || 0,
+              log: String(st.combat.last_log || "").slice(0, 180),
+              en: (st.combat.enemies || []).map((e) => ({
+                s: e.slot,
+                n: e.name || e.id || `敌#${e.slot}`,
+                hp: e.hp ?? 0,
+                mhp: e.max_hp || 1,
+              })),
+            }
+          : null,
+        gl: st.gles3 ? [st.gles3.draw_calls || 0, st.gles3.triangles || 0] : [0, 0],
+      };
+      if (ptyKey !== prevPtyKey) {
+        out.pty = pty;
+        prevPtyKey = ptyKey;
+      }
+      if (invKey !== prevInvKey) {
+        out.inv = inv;
+        prevInvKey = invKey;
+      }
+      if (scKey !== prevScKey) {
+        out.npcs = (st.npcs || []).slice(0, 10).map((n) => ({
+          n: n.name,
+          p: (n.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+        }));
+        out.objs = (st.objects || []).slice(0, 14).map((o) => ({
+          n: o.name,
+          p: (o.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+          r: o.research_able ? 1 : 0,
+          u: o.uses > 99 ? 99 : (o.uses ?? 1),
+        }));
+        out.evs = (st.events || []).slice(0, 14).map((e) => ({
+          n: e.name,
+          p: (e.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+          t: e.type ?? 0,
+          a: e.active ? 1 : 0,
+        }));
+        out.mons = (st.monsters || []).slice(0, 8).map((m) => ({
+          n: m.name,
+          p: (m.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+        }));
+        prevScKey = scKey;
+      }
+      return out;
+    });
+    return {
+      runId: r.runId,
+      model: r.shortModel,
+      mode: r.mode,
+      realCpk: r.realCpk,
+      scopeLabel: r.scopeLabel,
+      toolCalls: r.toolCalls,
+      victories: r.victories,
+      maxLevel: r.maxLevel,
+      durationSec: Number((r.durationMs / 1000).toFixed(1)),
+      steps,
+    };
+  });
 }
 
 /** 24-Stage Retail CPK Act I-IV Matrix */
@@ -322,7 +440,7 @@ function renderTokenSvg(runs) {
   </svg>`;
 }
 
-export function generateBoardHtml(runs) {
+export function generateBoardHtml(runs, defaultTab = "stats") {
   const cpkOpus = runs.find((r) => r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("opus"));
   const cpkArgon = runs.find((r) => r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("argon"));
   const synthPureArgon = runs.find((r) => !r.realCpk && r.mode === "pure" && r.gameCleared && r.shortModel.includes("argon"));
@@ -330,6 +448,7 @@ export function generateBoardHtml(runs) {
   const pureFull = cpkOpus || cpkArgon || synthPureArgon || runs[0];
   const normalFull = runs.find((r) => r.mode === "normal" && r.gameCleared);
   const verifiedCount = runs.filter((r) => r.verifyState === "verified").length;
+  const replayDataJson = JSON.stringify(buildCompactReplayRuns(runs)).replace(/<\//g, "<\\/");
 
   const stepReductionPct =
     synthPureArgon && normalFull
@@ -395,7 +514,7 @@ export function generateBoardHtml(runs) {
       <td class="num">${r.drawCalls} DC / ${r.triangles} Tri</td>
       <td class="num">${(r.totalTokens / 1000).toFixed(1)}k<div class="sub">缓存 ${(r.cacheReadTokens / 1000).toFixed(1)}k</div></td>
       <td class="num">${(r.durationMs / 1000).toFixed(1)}s</td>
-      <td>${renderVerifyBadge(r.verifyState, r.verifyDigest)}</td>
+      <td>${renderVerifyBadge(r.verifyState, r.verifyDigest)} <button type="button" class="rp-jump-btn" onclick="window.openReplayFor('${esc(r.runId)}')">🎬 回放</button></td>
     </tr>`,
     )
     .join("\n");
@@ -405,7 +524,7 @@ export function generateBoardHtml(runs) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>仙剑奇侠传四 · 问情论剑 — agent-pal4 排行榜与评测基准</title>
+<title>仙剑奇侠传四 · 问情论剑 — agent-pal4 排行榜与 Web 交互式回放器</title>
 <style>
   :root {
     --sky1: #0b1320; --sky2: #1c2d42; --sky3: #2e4760;
@@ -491,6 +610,7 @@ export function generateBoardHtml(runs) {
   }
   .tabs-nav label:hover { color: var(--ink); background: rgba(127,127,127,0.08); }
   #tab-stats:checked ~ .tabs-nav label[for="tab-stats"],
+  #tab-replay:checked ~ .tabs-nav label[for="tab-replay"],
   #tab-campaigns:checked ~ .tabs-nav label[for="tab-campaigns"],
   #tab-cpk:checked ~ .tabs-nav label[for="tab-cpk"],
   #tab-verify:checked ~ .tabs-nav label[for="tab-verify"] {
@@ -498,9 +618,82 @@ export function generateBoardHtml(runs) {
   }
   .tab-pane { display: none; }
   #tab-stats:checked ~ #pane-stats,
+  #tab-replay:checked ~ #pane-replay,
   #tab-campaigns:checked ~ #pane-campaigns,
   #tab-cpk:checked ~ #pane-cpk,
   #tab-verify:checked ~ #pane-verify { display: block; }
+
+  /* ── Web 交互式回放器样式 ── */
+  .rp-jump-btn {
+    cursor: pointer; padding: 2px 8px; margin-left: 4px; border-radius: 999px;
+    border: 1px solid var(--accent); background: var(--accent-soft);
+    color: var(--accent); font-size: 11.5px; font-weight: 600;
+  }
+  .rp-jump-btn:hover { background: var(--accent); color: #fff; }
+  .rp-toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px 14px; margin-bottom: 12px;
+  }
+  .rp-toolbar select, .rp-toolbar button, .rp-toolbar label.rp-file {
+    background: var(--paper); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 11px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .rp-toolbar button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent); min-width: 82px;
+  }
+  .rp-toolbar button:hover, .rp-toolbar label.rp-file:hover { border-color: var(--accent); }
+  .rp-scrubber {
+    background: var(--card); border: 1px solid var(--line); border-radius: 9px;
+    padding: 10px 14px; margin-bottom: 14px;
+  }
+  .rp-scrubber input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+  .rp-milestones {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+  }
+  .rp-ms {
+    cursor: pointer; padding: 2px 9px; border-radius: 999px; font-size: 11.5px;
+    background: var(--paper); border: 1px solid var(--line); color: var(--ink-soft);
+  }
+  .rp-ms:hover, .rp-ms.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .rp-grid {
+    display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 16px;
+  }
+  @media (max-width: 960px) { .rp-grid { grid-template-columns: 1fr; } }
+  .rp-stage-card, .rp-hud-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 14px;
+  }
+  .rp-canvas-wrap {
+    position: relative; background: #09111b; border: 1px solid #223246;
+    border-radius: 8px; overflow: hidden;
+  }
+  canvas#rp-canvas { width: 100%; height: 430px; display: block; }
+  .rp-legend {
+    display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--ink-soft);
+  }
+  .rp-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .rp-journal-box {
+    background: linear-gradient(90deg, rgba(184,132,24,0.12), rgba(35,87,122,0.06));
+    border: 1px solid var(--line); border-left: 4px solid var(--gold);
+    border-radius: 7px; padding: 10px 12px; margin-bottom: 10px;
+  }
+  .rp-dlg-box {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 7px;
+    padding: 10px 12px; height: 185px; overflow-y: auto; margin-bottom: 10px; font-size: 13px;
+  }
+  .rp-dlg-line { margin-bottom: 6px; line-height: 1.45; }
+  .rp-speaker {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-weight: 700;
+    font-size: 11.5px; margin-right: 5px; background: var(--accent-soft); color: var(--accent);
+  }
+  .rp-party-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin-bottom: 10px;
+  }
+  .rp-member {
+    background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font-size: 12px;
+  }
+  .rp-bar { height: 6px; background: rgba(127,127,127,0.2); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+  .rp-bar > div { height: 100%; border-radius: 3px; transition: width 0.2s ease; }
 
   /* ── 卡片与栅格 ── */
   .intro-box {
@@ -659,13 +852,15 @@ export function generateBoardHtml(runs) {
 </header>
 
 <main>
-  <input type="radio" name="main-tab" id="tab-stats" class="tabs-Radio" checked>
-  <input type="radio" name="main-tab" id="tab-campaigns" class="tabs-Radio">
-  <input type="radio" name="main-tab" id="tab-cpk" class="tabs-Radio">
-  <input type="radio" name="main-tab" id="tab-verify" class="tabs-Radio">
+  <input type="radio" name="main-tab" id="tab-stats" class="tabs-Radio" ${defaultTab === "stats" ? "checked" : ""}>
+  <input type="radio" name="main-tab" id="tab-replay" class="tabs-Radio" ${defaultTab === "replay" ? "checked" : ""}>
+  <input type="radio" name="main-tab" id="tab-campaigns" class="tabs-Radio" ${defaultTab === "campaigns" ? "checked" : ""}>
+  <input type="radio" name="main-tab" id="tab-cpk" class="tabs-Radio" ${defaultTab === "cpk" ? "checked" : ""}>
+  <input type="radio" name="main-tab" id="tab-verify" class="tabs-Radio" ${defaultTab === "verify" ? "checked" : ""}>
 
   <nav class="tabs-nav" aria-label="排行榜视图切换">
     <label for="tab-stats">🏠 基准总览与排行榜</label>
+    <label for="tab-replay">🎬 交互式 3D 轨迹与剧情回放器</label>
     <label for="tab-campaigns">壹 · Pure vs Normal 自主通关榜 (${runs.length})</label>
     <label for="tab-cpk">贰 · 原版 CPK 全四章 24 关主线矩阵</label>
     <label for="tab-verify">叁 · 引擎架构与重放核验</label>
@@ -1120,16 +1315,100 @@ node bench/board.mjs</code></pre>
     </div>
   </section>
 
+  <!-- ==================== TAB REPLAY: Web 交互式 3D 轨迹与剧情回放器 ==================== -->
+  <section id="pane-replay" class="tab-pane">
+    <h2>🎬 问情论剑 · Web 交互式 3D 轨迹与原版剧情回放器<small>内置全部 ${runs.length} 局完整通关快照 · 支持倍速播放、章节跳关、3D 场景态势图与加载外部 <code>episode.jsonl</code></small></h2>
+
+    <div class="rp-toolbar">
+      <label for="rp-run-select" style="font-weight:700;font-size:13px;">选择通关记录：</label>
+      <select id="rp-run-select" aria-label="选择要回放的运行记录"></select>
+      <button type="button" id="rp-first" title="跳至首帧 (Home)">⏮ 首帧</button>
+      <button type="button" id="rp-prev" title="上一步 (←)">⏪ 上一步</button>
+      <button type="button" id="rp-play" class="primary" title="播放 / 暂停 (Space)">▶️ 播放</button>
+      <button type="button" id="rp-next" title="下一步 (→)">⏩ 下一步</button>
+      <button type="button" id="rp-last" title="跳至末帧 (End)">⏭ 末帧</button>
+      <label for="rp-speed" style="font-size:12.5px;color:var(--ink-soft);">倍速：</label>
+      <select id="rp-speed" aria-label="回放倍速">
+        <option value="1400">0.5x 慢放</option>
+        <option value="800" selected>1x 标准</option>
+        <option value="420">2x 快进</option>
+        <option value="200">4x 疾行</option>
+        <option value="90">8x 极速</option>
+      </select>
+      <label class="rp-file" title="加载任意本地 episode.jsonl 文件进行回放">
+        📂 加载本地 episode.jsonl
+        <input type="file" id="rp-file-input" accept=".jsonl,.json" style="display:none">
+      </label>
+      <span id="rp-step-badge" style="margin-left:auto;font:700 13px var(--font-mono);color:var(--accent);">Step 0 / 0</span>
+    </div>
+
+    <div class="rp-scrubber">
+      <input type="range" id="rp-slider" min="0" max="1" value="0" aria-label="回放时间轴进度条">
+      <div class="rp-milestones" id="rp-milestones"></div>
+    </div>
+
+    <div class="rp-grid">
+      <div class="rp-stage-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div>
+            <strong id="rp-scene-title" style="font:700 16px var(--font-serif);">Q01/N01 · 青鸾峰</strong>
+            <span id="rp-scene-sub" class="sub" style="margin-left:8px;">Frame 0</span>
+          </div>
+          <span id="rp-status-badge" class="vbadge ok">待命</span>
+        </div>
+        <div class="rp-canvas-wrap">
+          <canvas id="rp-canvas" width="720" height="440"></canvas>
+        </div>
+        <div class="rp-legend">
+          <span><i class="rp-dot" style="background:#34d399;"></i>领队与本幕移动轨迹</span>
+          <span><i class="rp-dot" style="background:#38bdf8;"></i>NPC 角色</span>
+          <span><i class="rp-dot" style="background:#f59e0b;"></i>场景机关 / 道具 (GOB)</span>
+          <span><i class="rp-dot" style="background:#a78bfa;"></i>传送门 / 剧情触发点 (.evf)</span>
+          <span><i class="rp-dot" style="background:#f87171;"></i>迷宫怪物</span>
+        </div>
+      </div>
+
+      <div class="rp-hud-card">
+        <div class="rp-journal-box">
+          <div style="font-size:11.5px;font-weight:700;color:var(--gold);letter-spacing:0.06em;">📜 竹简主线目标 (Quest Journal)</div>
+          <div id="rp-journal-text" style="font-weight:600;font-size:13.5px;margin-top:2px;">-</div>
+          <div id="rp-journal-wp" class="sub" style="margin-top:2px;">路标：<code>-</code></div>
+        </div>
+
+        <div style="margin-bottom:10px;padding:8px 11px;background:var(--paper);border:1px solid var(--line);border-radius:7px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:12px;font-weight:700;color:var(--ink-soft);">🛠️ 当前工具调用 (Agent Action)</span>
+            <span id="rp-telemetry" class="sub">0 DC / 0 Tri</span>
+          </div>
+          <div id="rp-tool-call" style="margin-top:3px;font:700 13px var(--font-mono);color:var(--accent);word-break:break-all;">init()</div>
+        </div>
+
+        <div style="font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">💬 原版过场对白与引擎事件流 (Story &amp; Event Log)</div>
+        <div class="rp-dlg-box" id="rp-dlg-box"></div>
+
+        <div style="font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:5px;">👥 队伍状态 (Party Roster)</div>
+        <div class="rp-party-grid" id="rp-party-grid"></div>
+
+        <div style="font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:4px;">
+          🎒 背包信物与铜钱 (<span id="rp-money">0</span> 文)
+        </div>
+        <div id="rp-inv-list" style="display:flex;flex-wrap:wrap;gap:5px;font-size:12px;"></div>
+      </div>
+    </div>
+  </section>
+
   <footer>
     agent-pal4 · Built on <a href="https://github.com/jianmliu/OpenPAL4" target="_blank" rel="noopener">OpenPAL4</a> C++20 Portable Runtime &amp; Headless GLES3 Shim ·
     <a href="https://github.com/jianmliu/agent-pal4" target="_blank" rel="noopener">GitHub Repository</a>
   </footer>
 </main>
+<script id="rp-embedded-data" type="application/json">${replayDataJson}</script>
 <script>
-  // URL hash 与页签双向同步 (#stats, #campaigns, #cpk, #verify)
+  // URL hash 与页签双向同步 (#stats, #replay, #campaigns, #cpk, #verify)
   (function () {
     const map = {
       "#stats": "tab-stats",
+      "#replay": "tab-replay",
       "#campaigns": "tab-campaigns",
       "#cpk": "tab-cpk",
       "#verify": "tab-verify",
@@ -1150,6 +1429,600 @@ node bench/board.mjs</code></pre>
       }
     }
   })();
+
+  // ── Web 交互式 3D 轨迹与剧情回放器核心逻辑 ──
+  (function () {
+    const rawRuns = JSON.parse(document.getElementById("rp-embedded-data").textContent || "[]");
+
+    // 展开增量编码步骤（补齐继承的 pty, inv, npcs, objs, evs, mons）
+    function hydrateRun(run) {
+      let pty = [],
+        inv = { m: 0, it: [] },
+        npcs = [],
+        objs = [],
+        evs = [],
+        mons = [];
+      const hydrated = (run.steps || []).map((s) => {
+        if (s.pty) pty = s.pty;
+        if (s.inv) inv = s.inv;
+        if (s.npcs) npcs = s.npcs;
+        if (s.objs) objs = s.objs;
+        if (s.evs) evs = s.evs;
+        if (s.mons) mons = s.mons;
+        return Object.assign({}, s, { pty, inv, npcs, objs, evs, mons });
+      });
+      return Object.assign({}, run, { steps: hydrated });
+    }
+
+    const runs = rawRuns.map(hydrateRun);
+    let curRunIdx = 0;
+    let curStepIdx = 0;
+    let timer = null;
+
+    const selEl = document.getElementById("rp-run-select");
+    const speedEl = document.getElementById("rp-speed");
+    const sliderEl = document.getElementById("rp-slider");
+    const msEl = document.getElementById("rp-milestones");
+    const badgeEl = document.getElementById("rp-step-badge");
+    const playBtn = document.getElementById("rp-play");
+    const canvas = document.getElementById("rp-canvas");
+    const ctx = canvas.getContext("2d");
+
+    function populateRunSelect() {
+      selEl.innerHTML = runs
+        .map(
+          (r, idx) =>
+            \`<option value="\${idx}">[\${idx + 1}] \${r.model} · \${r.mode.toUpperCase()}\${r.realCpk ? " (原版CPK 24幕)" : " (浓缩战役)"} · \${r.toolCalls}步 · \${r.victories}胜 (\${r.runId})</option>\`,
+        )
+        .join("");
+      selEl.value = String(curRunIdx);
+    }
+
+    function buildMilestones(run) {
+      const steps = run.steps || [];
+      const chips = [];
+      const seenWorlds = new Set();
+      steps.forEach((s, idx) => {
+        const wKey = \`\${s.w}/\${s.sc}\`;
+        if (idx === 0) {
+          chips.push({ idx, label: \`🌱 起点 \${wKey}\` });
+          seenWorlds.add(s.w);
+        } else if (s.w && !seenWorlds.has(s.w)) {
+          seenWorlds.add(s.w);
+          chips.push({ idx, label: \`🗺️ \${s.w} \${s.title || s.sc}\` });
+        } else if (s.clr && !chips.some((c) => c.label.includes("终局通关"))) {
+          chips.push({ idx, label: \`🏆 终局通关 (#\${s.step})\` });
+        }
+      });
+      msEl.innerHTML = chips
+        .slice(0, 18)
+        .map((c) => \`<span class="rp-ms" data-idx="\${c.idx}">\${c.label}</span>\`)
+        .join("");
+      for (const el of msEl.querySelectorAll(".rp-ms")) {
+        el.addEventListener("click", () => {
+          stopPlay();
+          setStep(Number(el.dataset.idx));
+        });
+      }
+    }
+
+    function selectRun(idx) {
+      stopPlay();
+      curRunIdx = Math.max(0, Math.min(runs.length - 1, idx));
+      selEl.value = String(curRunIdx);
+      const run = runs[curRunIdx];
+      sliderEl.max = String(Math.max(0, (run?.steps?.length || 1) - 1));
+      buildMilestones(run);
+      setStep(0);
+    }
+
+    window.openReplayFor = function (runId) {
+      const idx = runs.findIndex((r) => r.runId === runId);
+      const tabReplay = document.getElementById("tab-replay");
+      if (tabReplay) {
+        tabReplay.checked = true;
+        history.replaceState(null, "", "#replay");
+      }
+      if (idx >= 0) selectRun(idx);
+      window.scrollTo({ top: 180, behavior: "smooth" });
+    };
+
+    function formatDialogs(evStr, dlgStr) {
+      const raw = [];
+      if (evStr) {
+        const cleaned = evStr.replace(/^(confirmed_dialog:|opened_dialog:)/, "");
+        cleaned.split("|").forEach((part) => {
+          const t = part.trim();
+          if (t) raw.push(t);
+        });
+      }
+      if (dlgStr && !evStr.includes(dlgStr)) {
+        dlgStr.split("|").forEach((part) => {
+          const t = part.trim();
+          if (t) raw.push(t);
+        });
+      }
+      if (!raw.length) return \`<div class="sub">本步无新增对白</div>\`;
+      return raw
+        .map((line) => {
+          const m = line.match(/^([^：:]{1,8})[：:](.*)$/);
+          if (m) {
+            return \`<div class="rp-dlg-line"><span class="rp-speaker">\${m[1]}</span><span>\${m[2]}</span></div>\`;
+          }
+          return \`<div class="rp-dlg-line"><span>\${line}</span></div>\`;
+        })
+        .join("");
+    }
+
+    function drawRadar(run, stepIdx) {
+      const s = run.steps[stepIdx];
+      if (!s) return;
+      const W = canvas.width,
+        H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      // 背景渐变与罗盘网格
+      const bg = ctx.createLinearGradient(0, 0, 0, H);
+      bg.addColorStop(0, "#08111c");
+      bg.addColorStop(1, "#0f1e30");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+
+      // 收集本场景内所有实体的 X/Z 坐标以自适应缩放
+      const scKey = \`\${s.w}/\${s.sc}\`;
+      const sceneTrail = [];
+      for (let i = 0; i <= stepIdx; i++) {
+        const st = run.steps[i];
+        if (\`\${st.w}/\${st.sc}\` === scKey && st.ldr?.p?.length >= 3) {
+          sceneTrail.push({ step: st.step, p: st.ldr.p, yaw: st.ldr.yaw || 0, n: st.ldr.n });
+        }
+      }
+
+      const pts = [];
+      sceneTrail.forEach((t) => pts.push([t.p[0], t.p[2]]));
+      (s.npcs || []).forEach((n) => n.p?.length >= 3 && pts.push([n.p[0], n.p[2]]));
+      (s.objs || []).forEach((o) => o.p?.length >= 3 && pts.push([o.p[0], o.p[2]]));
+      (s.evs || []).forEach((e) => e.p?.length >= 3 && pts.push([e.p[0], e.p[2]]));
+      (s.mons || []).forEach((m) => m.p?.length >= 3 && pts.push([m.p[0], m.p[2]]));
+      if (!pts.length) pts.push([0, 0]);
+
+      let minX = Math.min(...pts.map((p) => p[0])),
+        maxX = Math.max(...pts.map((p) => p[0]));
+      let minZ = Math.min(...pts.map((p) => p[1])),
+        maxZ = Math.max(...pts.map((p) => p[1]));
+      const span = Math.max(120, maxX - minX, maxZ - minZ) * 1.25;
+      const cx = (minX + maxX) / 2,
+        cz = (minZ + maxZ) / 2;
+      const pad = 44;
+      const drawW = W - pad * 2,
+        drawH = H - pad * 2;
+      const toX = (x) => pad + ((x - (cx - span / 2)) / span) * drawW;
+      const toY = (z) => pad + ((z - (cz - span / 2)) / span) * drawH;
+
+      // 网格线
+      ctx.strokeStyle = "rgba(108, 180, 232, 0.11)";
+      ctx.lineWidth = 1;
+      for (let g = 1; g < 6; g++) {
+        const gx = (W / 6) * g,
+          gy = (H / 6) * g;
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, H);
+        ctx.moveTo(0, gy);
+        ctx.lineTo(W, gy);
+        ctx.stroke();
+      }
+
+      const targetName = s.args?.target || s.j?.wp || "";
+      let targetPt = null;
+
+      // 1. 绘制 .evf 触发点 / 传送门 (紫罗兰六边形环)
+      ctx.font = "11px monospace";
+      (s.evs || []).forEach((e) => {
+        if (!e.p || e.p.length < 3) return;
+        const x = toX(e.p[0]),
+          y = toY(e.p[2]);
+        const isTgt = e.n === targetName;
+        if (isTgt) targetPt = [x, y];
+        ctx.strokeStyle = isTgt ? "#fde047" : "#a78bfa";
+        ctx.lineWidth = isTgt ? 2.5 : 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, isTgt ? 8 : 5.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = isTgt ? "#fde047" : "rgba(196, 181, 253, 0.85)";
+        ctx.fillText(e.n, x + 8, y + 3);
+      });
+
+      // 2. 绘制场景机关 / 道具 GOB (琥珀金圆点)
+      (s.objs || []).forEach((o) => {
+        if (!o.p || o.p.length < 3) return;
+        const x = toX(o.p[0]),
+          y = toY(o.p[2]);
+        const isTgt = o.n === targetName;
+        if (isTgt) targetPt = [x, y];
+        ctx.fillStyle = isTgt ? "#fde047" : "#f59e0b";
+        ctx.beginPath();
+        ctx.arc(x, y, isTgt ? 6.5 : 4.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = isTgt ? "#fde047" : "rgba(251, 191, 36, 0.88)";
+        ctx.fillText(o.n, x + 7, y + 3);
+      });
+
+      // 3. 绘制 NPC (青玉菱形)
+      (s.npcs || []).forEach((n) => {
+        if (!n.p || n.p.length < 3) return;
+        const x = toX(n.p[0]),
+          y = toY(n.p[2]);
+        const isTgt = n.n === targetName;
+        if (isTgt) targetPt = [x, y];
+        ctx.fillStyle = isTgt ? "#fde047" : "#38bdf8";
+        ctx.beginPath();
+        ctx.moveTo(x, y - 6);
+        ctx.lineTo(x + 6, y);
+        ctx.lineTo(x, y + 6);
+        ctx.lineTo(x - 6, y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillText(n.n, x + 8, y + 4);
+      });
+
+      // 4. 绘制迷宫怪物 (赤红三角)
+      (s.mons || []).forEach((m) => {
+        if (!m.p || m.p.length < 3) return;
+        const x = toX(m.p[0]),
+          y = toY(m.p[2]);
+        ctx.fillStyle = "#f87171";
+        ctx.beginPath();
+        ctx.moveTo(x, y - 5);
+        ctx.lineTo(x + 5, y + 5);
+        ctx.lineTo(x - 5, y + 5);
+        ctx.closePath();
+        ctx.fill();
+      });
+
+      // 5. 绘制本幕内领队移动历史轨迹
+      if (sceneTrail.length > 1) {
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.65)";
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        sceneTrail.forEach((t, idx) => {
+          const x = toX(t.p[0]),
+            y = toY(t.p[2]);
+          if (idx === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        sceneTrail.forEach((t) => {
+          ctx.fillStyle = "rgba(52, 211, 153, 0.45)";
+          ctx.beginPath();
+          ctx.arc(toX(t.p[0]), toY(t.p[2]), 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // 6. 绘制当前领队位置与交互光束
+      if (s.ldr?.p?.length >= 3) {
+        const lx = toX(s.ldr.p[0]),
+          ly = toY(s.ldr.p[2]);
+        if (targetPt) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(253, 224, 71, 0.78)";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.moveTo(lx, ly);
+          ctx.lineTo(targetPt[0], targetPt[1]);
+          ctx.stroke();
+          ctx.restore();
+        }
+        // 光晕
+        ctx.fillStyle = "rgba(52, 211, 153, 0.25)";
+        ctx.beginPath();
+        ctx.arc(lx, ly, 15, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 领队核心圆点
+        ctx.fillStyle = "#34d399";
+        ctx.beginPath();
+        ctx.arc(lx, ly, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 朝向箭头
+        const rad = ((s.ldr.yaw || 0) * Math.PI) / 180;
+        ctx.strokeStyle = "#fde047";
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx + Math.sin(rad) * 14, ly + Math.cos(rad) * 14);
+        ctx.stroke();
+
+        ctx.fillStyle = "#ecfdf5";
+        ctx.font = "bold 12px sans-serif";
+        ctx.fillText(\`\${s.ldr.n} (\${s.ldr.p[0]}, \${s.ldr.p[1]}, \${s.ldr.p[2]})\`, lx + 12, ly - 10);
+      }
+
+      // 7. 场景左上角水墨铭牌与特殊状态横幅（五灵战斗 / 御剑飞行 / 大结局）
+      ctx.fillStyle = "rgba(9, 17, 27, 0.78)";
+      ctx.fillRect(12, 12, 310, 44);
+      ctx.strokeStyle = "rgba(108, 180, 232, 0.35)";
+      ctx.strokeRect(12, 12, 310, 44);
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "bold 14px serif";
+      ctx.fillText(\`\${s.w}/\${s.sc} · \${s.title || "仙剑四场景"}\`, 22, 32);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "11.5px monospace";
+      ctx.fillText(\`累计胜场: \${s.cbt?.v ?? 0} 胜 | 渲染: \${s.gl?.[0] ?? 0} DC\`, 22, 48);
+
+      if (s.tool === "combat_action" || s.cbt?.act || /combat_victory/i.test(s.ev)) {
+        ctx.fillStyle = "rgba(168, 46, 38, 0.88)";
+        ctx.fillRect(W - 265, 14, 250, 42);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 13.5px serif";
+        ctx.fillText(
+          /combat_victory/i.test(s.ev) ? "⚔️ 五灵战斗获胜 (BOSS DEFEATED)" : "⚔️ 五灵回合战斗进行中",
+          W - 253,
+          34,
+        );
+        ctx.font = "11px monospace";
+        ctx.fillText(\`累计击败头目: \${s.cbt?.v ?? 0} 场\`, W - 253, 49);
+      } else if (s.tool === "fly_to") {
+        ctx.fillStyle = "rgba(35, 87, 122, 0.9)";
+        ctx.fillRect(W - 255, 14, 240, 38);
+        ctx.fillStyle = "#fde047";
+        ctx.font = "bold 13.5px serif";
+        ctx.fillText(\`🗡️ 御剑飞行 → \${s.args?.destination || s.w}\`, W - 242, 38);
+      }
+
+      if (s.clr) {
+        ctx.fillStyle = "rgba(31, 110, 74, 0.92)";
+        ctx.fillRect(W / 2 - 175, H - 54, 350, 40);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 15px serif";
+        ctx.fillText("🏆 百年之后青鸾峰重逢 · 全四章圆满通关！", W / 2 - 155, H - 29);
+      }
+    }
+
+    function setStep(idx) {
+      const run = runs[curRunIdx];
+      if (!run || !run.steps?.length) return;
+      curStepIdx = Math.max(0, Math.min(run.steps.length - 1, idx));
+      sliderEl.value = String(curStepIdx);
+      const s = run.steps[curStepIdx];
+
+      badgeEl.textContent = \`Step \${s.step} / \${run.steps[run.steps.length - 1].step}\`;
+      document.getElementById("rp-scene-title").textContent = \`\${s.w || "-"}/\${s.sc || "-"} · \${s.title || ""}\`;
+      document.getElementById("rp-scene-sub").textContent = \`Frame \${s.frame} · 累计 \${s.cbt?.v ?? 0} 胜\`;
+
+      const stBadge = document.getElementById("rp-status-badge");
+      if (s.clr) {
+        stBadge.className = "vbadge ok";
+        stBadge.textContent = "已通关 ✓";
+      } else if (s.tool === "combat_action" || s.cbt?.act) {
+        stBadge.className = "vbadge bad";
+        stBadge.textContent = "五灵战斗 ⚔️";
+      } else {
+        stBadge.className = "vbadge ok";
+        stBadge.textContent = s.ok ? "执行成功 ✓" : "异常";
+      }
+
+      document.getElementById("rp-journal-text").textContent =
+        s.j?.s || (s.clr ? "全四章大结局已达成" : "自由探索当前场景与对话推进主线");
+      document.getElementById("rp-journal-wp").innerHTML = \`路标：<code>\${s.j?.wp || "-"}</code>\`;
+
+      const argPairs = Object.entries(s.args || {})
+        .map(([k, v]) => \`\${k}=\${JSON.stringify(v)}\`)
+        .join(", ");
+      document.getElementById("rp-tool-call").textContent = \`#\${s.step} \${s.tool}(\${argPairs})\`;
+      document.getElementById("rp-telemetry").textContent = \`\${s.gl?.[0] ?? 0} DC / \${s.gl?.[1] ?? 0} Tri\`;
+
+      document.getElementById("rp-dlg-box").innerHTML = formatDialogs(s.ev || "", s.dlg || "");
+
+      const ptyHtml = (s.pty || [])
+        .map((p) => {
+          const hpPct = Math.min(100, Math.round(((p.hp || 0) / Math.max(1, p.mhp || 1)) * 100));
+          const mpPct = Math.min(100, Math.round(((p.mp || 0) / Math.max(1, p.mmp || 1)) * 100));
+          return \`<div class="rp-member">
+            <div style="display:flex;justify-content:space-between;font-weight:700;">
+              <span>\${p.n}</span><span style="color:var(--accent)">Lv.\${p.lv}</span>
+            </div>
+            <div class="sub">精 \${p.hp}/\${p.mhp} · 神 \${p.mp}/\${p.mmp}</div>
+            <div class="rp-bar"><div style="width:\${hpPct}%;background:var(--ok);"></div></div>
+            <div class="rp-bar"><div style="width:\${mpPct}%;background:var(--accent);"></div></div>
+          </div>\`;
+        })
+        .join("");
+      document.getElementById("rp-party-grid").innerHTML = ptyHtml || \`<div class="sub">暂无队伍数据</div>\`;
+
+      document.getElementById("rp-money").textContent = String(s.inv?.m ?? 0);
+      document.getElementById("rp-inv-list").innerHTML =
+        (s.inv?.it || []).map((it) => \`<span class="tag">\${it}</span>\`).join("") ||
+        \`<span class="sub">行囊为空</span>\`;
+
+      // 高亮当前所处里程碑
+      let activeChip = null;
+      for (const chip of msEl.querySelectorAll(".rp-ms")) {
+        chip.classList.remove("active");
+        if (Number(chip.dataset.idx) <= curStepIdx) activeChip = chip;
+      }
+      if (activeChip) activeChip.classList.add("active");
+
+      drawRadar(run, curStepIdx);
+    }
+
+    function stopPlay() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      playBtn.textContent = "▶️ 播放";
+    }
+
+    function startPlay() {
+      stopPlay();
+      const run = runs[curRunIdx];
+      if (!run) return;
+      if (curStepIdx >= run.steps.length - 1) setStep(0);
+      playBtn.textContent = "⏸ 暂停";
+      const interval = Number(speedEl.value) || 800;
+      timer = setInterval(() => {
+        const r = runs[curRunIdx];
+        if (!r || curStepIdx >= r.steps.length - 1) {
+          stopPlay();
+          return;
+        }
+        setStep(curStepIdx + 1);
+      }, interval);
+    }
+
+    selEl.addEventListener("change", () => selectRun(Number(selEl.value)));
+    speedEl.addEventListener("change", () => {
+      if (timer) startPlay();
+    });
+    sliderEl.addEventListener("input", () => {
+      stopPlay();
+      setStep(Number(sliderEl.value));
+    });
+    document.getElementById("rp-first").addEventListener("click", () => {
+      stopPlay();
+      setStep(0);
+    });
+    document.getElementById("rp-prev").addEventListener("click", () => {
+      stopPlay();
+      setStep(curStepIdx - 1);
+    });
+    document.getElementById("rp-next").addEventListener("click", () => {
+      stopPlay();
+      setStep(curStepIdx + 1);
+    });
+    document.getElementById("rp-last").addEventListener("click", () => {
+      stopPlay();
+      const r = runs[curRunIdx];
+      if (r) setStep(r.steps.length - 1);
+    });
+    playBtn.addEventListener("click", () => {
+      if (timer) stopPlay();
+      else startPlay();
+    });
+
+    // 支持键盘快捷键（在回放页签激活时：Space 播放/暂停，←/→ 单步）
+    window.addEventListener("keydown", (e) => {
+      const tabReplay = document.getElementById("tab-replay");
+      if (!tabReplay || !tabReplay.checked) return;
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        stopPlay();
+        setStep(curStepIdx - 1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        stopPlay();
+        setStep(curStepIdx + 1);
+      } else if (e.key === " ") {
+        e.preventDefault();
+        if (timer) stopPlay();
+        else startPlay();
+      }
+    });
+
+    // 支持加载本地任意 episode.jsonl 文件
+    document.getElementById("rp-file-input").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const lines = text
+        .split(/\\r?\\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+      const start = lines.find((l) => l.type === "start");
+      const calls = lines.filter((l) => l.type === "call");
+      const rawSteps = [
+        ...(start?.initial ? [{ step: 0, tool: "init", args: {}, state: start.initial }] : []),
+        ...calls,
+      ].map((s) => {
+        const st = s.state || {};
+        return {
+          step: s.step ?? 0,
+          tool: s.tool || "step",
+          args: s.args || {},
+          ok: st.ok !== false,
+          ev: String(st.event || st.error || ""),
+          frame: st.frame || 0,
+          w: st.world || "",
+          sc: st.scene || "",
+          title: st.title || "",
+          clr: Boolean(st.game_cleared),
+          ldr: st.leader
+            ? {
+                n: st.leader.name || "云天河",
+                p: (st.leader.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+                yaw: Math.round(Number(st.leader.rotation_yaw) || 0),
+              }
+            : null,
+          pty: (st.party || [])
+            .filter((p) => p.in_team)
+            .map((p) => ({
+              n: p.name,
+              lv: p.level || 1,
+              hp: p.hp ?? 0,
+              mhp: p.max_hp || 1,
+              mp: p.mp ?? 0,
+              mmp: p.max_mp || 1,
+            })),
+          j: st.journal ? { s: st.journal.summary || "", wp: st.journal.waypoint || "" } : null,
+          dlg: st.dialog?.visible ? String(st.dialog.text || "") : "",
+          cbt: st.combat
+            ? {
+                act: Boolean(st.combat.active),
+                v: st.combat.victories || 0,
+                log: String(st.combat.last_log || ""),
+                en: [],
+              }
+            : null,
+          npcs: (st.npcs || []).map((n) => ({
+            n: n.name,
+            p: (n.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+          })),
+          objs: (st.objects || []).map((o) => ({
+            n: o.name,
+            p: (o.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+          })),
+          evs: (st.events || []).map((ev) => ({
+            n: ev.name,
+            p: (ev.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+          })),
+          mons: (st.monsters || []).map((m) => ({
+            n: m.name,
+            p: (m.position || [0, 0, 0]).map((x) => Math.round(Number(x) || 0)),
+          })),
+          inv: {
+            m: st.inventory?.money || 0,
+            it: (st.inventory?.items || []).map((i) => \`\${i.name}×\${i.count}\`),
+          },
+          gl: st.gles3 ? [st.gles3.draw_calls || 0, st.gles3.triangles || 0] : [0, 0],
+        };
+      });
+      runs.unshift({
+        runId: file.name,
+        model: start?.model || "custom-upload",
+        mode: start?.mode || "pure",
+        realCpk: Boolean(start?.realCpk),
+        toolCalls: calls.length,
+        victories: rawSteps[rawSteps.length - 1]?.cbt?.v || 0,
+        steps: rawSteps,
+      });
+      populateRunSelect();
+      selectRun(0);
+    });
+
+    if (runs.length) {
+      populateRunSelect();
+      selectRun(0);
+    }
+  })();
 </script>
 </body>
 </html>
@@ -1164,19 +2037,22 @@ function main() {
       : path.join(OUT_ROOT, "board.html");
 
   const runs = loadRuns(OUT_ROOT);
-  const html = generateBoardHtml(runs);
+  const html = generateBoardHtml(runs, "stats");
+  const replayHtml = generateBoardHtml(runs, "replay");
 
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, html, "utf8");
 
-  // Also write to web/board.html so it can be served or viewed directly alongside web/index.html
+  // Also write to web/board.html and web/replay.html so it can be served or viewed directly alongside web/index.html
   const webBoard = path.resolve(__dirname, "../web/board.html");
+  const webReplay = path.resolve(__dirname, "../web/replay.html");
   if (fs.existsSync(path.dirname(webBoard))) {
     fs.writeFileSync(webBoard, html, "utf8");
+    fs.writeFileSync(webReplay, replayHtml, "utf8");
   }
 
   console.log(
-    `[board] Generated leaderboard with ${runs.length} verified runs -> ${outFile} (${(Buffer.byteLength(html) / 1024).toFixed(1)} KB)`,
+    `[board] Generated leaderboard & interactive replay player with ${runs.length} verified runs -> ${outFile} & ${webReplay} (${(Buffer.byteLength(html) / 1024).toFixed(1)} KB)`,
   );
 }
 
