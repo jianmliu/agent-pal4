@@ -1,0 +1,1299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>仙剑奇侠传四 · 问情论剑 — agent-pal4 排行榜与评测基准</title>
+<style>
+  :root {
+    --sky1: #0b1320; --sky2: #1c2d42; --sky3: #2e4760;
+    --m1: #24384d; --m2: #1a2a3a; --m3: #101c28; --m4: #091018;
+    --ink: #1b2228; --ink-soft: #4e5964; --paper: #f4f1ea; --card: #fbf9f4;
+    --line: #d8d0c1; --accent: #23577a; --accent-soft: #e3eef5;
+    --seal: #a82e26; --gold: #b88418; --ok: #1f6e4a; --warn: #9e6710; --bad: #a62c22;
+    --moon: #f7eed2; --mist: #f4f1ea;
+    --font-serif: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", "STSong", serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e5e1d8; --ink-soft: #9aa4ae; --paper: #0e141b; --card: #151e28;
+      --line: #263342; --accent: #6cb4e8; --accent-soft: #1a2c3e;
+      --seal: #d9544b; --gold: #e0ad3e; --ok: #46b883; --warn: #e09c38; --bad: #e0584c;
+      --mist: #0e141b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 14.5px/1.6 var(--font-sans);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--font-mono); font-size: 0.88em;
+    background: rgba(127,127,127,0.12); padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ── 顶部昆仑琼华水墨横幅 ── */
+  header.hero {
+    position: relative; overflow: hidden;
+    background: linear-gradient(180deg, var(--sky1) 0%, var(--sky2) 55%, var(--sky3) 100%);
+    color: #f6f2e8;
+  }
+  header.hero svg.scene {
+    display: block; width: 100%; height: 225px;
+  }
+  .hero-title {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 0 20px 18px; text-align: center; pointer-events: none;
+  }
+  .hero-title h1 {
+    margin: 0; font: 700 34px/1.2 var(--font-serif);
+    letter-spacing: 0.22em; text-shadow: 0 3px 16px rgba(0,0,0,0.65);
+  }
+  .hero-title .seal {
+    display: inline-block; margin-left: 10px; padding: 2px 9px;
+    background: var(--seal); color: #fff; font: 600 14px/1.4 var(--font-serif);
+    letter-spacing: 0.14em; border-radius: 3px; vertical-align: middle;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .hero-title p {
+    margin: 8px 0 0; font: 400 13.5px/1.5 var(--font-serif);
+    letter-spacing: 0.12em; opacity: 0.9;
+  }
+  .gh-link {
+    position: absolute; top: 16px; right: 20px; z-index: 3;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 13px; border-radius: 999px;
+    background: rgba(15, 23, 34, 0.62); border: 1px solid rgba(255,255,255,0.22);
+    color: #f5f1e6; font-size: 12.5px; backdrop-filter: blur(6px);
+  }
+  .gh-link:hover { background: rgba(15, 23, 34, 0.85); text-decoration: none; }
+
+  main { max-width: 1220px; margin: 0 auto; padding: 18px 22px 64px; }
+
+  /* ── 页签导航 ── */
+  .tabs-Radio { display: none; }
+  .tabs-nav {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin: -8px 0 22px; padding: 8px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .tabs-nav label {
+    cursor: pointer; padding: 8px 16px; border-radius: 7px;
+    font-weight: 600; font-size: 13.5px; color: var(--ink-soft);
+    transition: all 0.15s ease; user-select: none;
+  }
+  .tabs-nav label:hover { color: var(--ink); background: rgba(127,127,127,0.08); }
+  #tab-stats:checked ~ .tabs-nav label[for="tab-stats"],
+  #tab-campaigns:checked ~ .tabs-nav label[for="tab-campaigns"],
+  #tab-cpk:checked ~ .tabs-nav label[for="tab-cpk"],
+  #tab-verify:checked ~ .tabs-nav label[for="tab-verify"] {
+    background: var(--accent); color: #fff;
+  }
+  .tab-pane { display: none; }
+  #tab-stats:checked ~ #pane-stats,
+  #tab-campaigns:checked ~ #pane-campaigns,
+  #tab-cpk:checked ~ #pane-cpk,
+  #tab-verify:checked ~ #pane-verify { display: block; }
+
+  /* ── 卡片与栅格 ── */
+  .intro-box {
+    background: var(--card); border: 1px solid var(--line);
+    border-left: 4px solid var(--accent); border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 18px;
+  }
+  .pillars {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 12px; margin-top: 14px;
+  }
+  .pillar {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 7px; padding: 12px 14px;
+  }
+  .pillar strong { display: block; margin-bottom: 4px; color: var(--accent); }
+  .pillar span { font-size: 12.8px; color: var(--ink-soft); }
+
+  .kpis {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 12px; margin-bottom: 22px;
+  }
+  .kpi {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .kpi .v { font: 700 23px/1.2 var(--font-serif); color: var(--accent); }
+  .kpi .l { margin-top: 4px; font-weight: 600; font-size: 13px; }
+  .kpi .s { margin-top: 2px; font-size: 12px; color: var(--ink-soft); }
+
+  h2 {
+    margin: 28px 0 12px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    font: 700 19px/1.35 var(--font-serif); letter-spacing: 0.04em;
+  }
+  h2 small {
+    font: 400 12.5px/1.4 var(--font-sans); color: var(--ink-soft);
+    margin-left: 10px; letter-spacing: 0;
+  }
+
+  /* ── 三甲席位 ── */
+  .podium {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 14px; margin-bottom: 20px;
+  }
+  .pod {
+    background: var(--card); border: 1px solid var(--line);
+    border-top: 4px solid var(--accent); border-radius: 8px; padding: 14px 16px;
+  }
+  .pod.gold { border-top-color: var(--gold); }
+  .pod.silver { border-top-color: #7c8b99; }
+  .pod.bronze { border-top-color: #a86838; }
+  .pod .medal { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
+  .pod .name { font: 700 17px/1.3 var(--font-mono); margin: 4px 0 6px; }
+  .pod .score { font: 700 22px/1.2 var(--font-serif); color: var(--ok); }
+  .pod .meta { margin-top: 6px; font-size: 12.5px; color: var(--ink-soft); }
+
+  /* ── 表格 ── */
+  .table-wrap {
+    overflow-x: auto; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px; margin-bottom: 20px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  th {
+    background: rgba(127,127,127,0.06); font-weight: 600;
+    color: var(--ink-soft); font-size: 12.5px; white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(127,127,127,0.04); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.rank { font: 700 15px var(--font-serif); color: var(--accent); width: 42px; text-align: center; }
+  .mname { font-weight: 700; font-family: var(--font-mono); }
+  .sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+
+  /* ── 徽章 ── */
+  .mbadge, .vbadge, .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 600; white-space: nowrap;
+  }
+  .mbadge.pure { background: rgba(31, 110, 74, 0.15); color: var(--ok); border: 1px solid rgba(31, 110, 74, 0.35); }
+  .mbadge.normal { background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(35, 87, 122, 0.3); }
+  .vbadge.ok { background: rgba(31, 110, 74, 0.14); color: var(--ok); }
+  .vbadge.warn { background: rgba(158, 103, 16, 0.15); color: var(--warn); }
+  .vbadge.bad { background: rgba(166, 44, 34, 0.15); color: var(--bad); }
+  .tag { background: rgba(127,127,127,0.12); color: var(--ink); }
+
+  /* ── 散点图 ── */
+  .charts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+    gap: 16px; margin-bottom: 22px;
+  }
+  .chart-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .chart-card h3 { margin: 0 0 8px; font: 600 14.5px var(--font-serif); }
+  svg.scatter { width: 100%; height: auto; display: block; }
+  svg.scatter .grid { stroke: var(--line); stroke-dasharray: 2,3; }
+  svg.scatter .ax { font: 11px var(--font-mono); fill: var(--ink-soft); }
+  svg.scatter .ax-title { font: 11.5px var(--font-sans); fill: var(--ink-soft); }
+  svg.scatter .pt text { font: 600 11px var(--font-mono); fill: var(--ink); }
+
+  /* ── BibTeX 与页脚 ── */
+  .cta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 16px; margin-top: 24px;
+  }
+  .cta-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px 18px;
+  }
+  .cta-card h3 { margin: 0 0 8px; font: 700 15.5px var(--font-serif); }
+  pre.bib {
+    margin: 8px 0 0; padding: 12px; border-radius: 6px;
+    background: var(--paper); border: 1px solid var(--line);
+    font: 12px/1.45 var(--font-mono); overflow-x: auto;
+  }
+  button.copy-btn {
+    cursor: pointer; padding: 4px 10px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--paper);
+    color: var(--ink); font-size: 12px; float: right;
+  }
+  button.copy-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+  footer {
+    margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line);
+    text-align: center; font-size: 12.5px; color: var(--ink-soft);
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <a class="gh-link" href="https://github.com/jianmliu/agent-pal4" target="_blank" rel="noopener">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 014 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    <span>jianmliu/agent-pal4</span>
+  </a>
+  <svg class="scene" viewBox="0 0 1200 220" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="mist" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--mist)" stop-opacity="0"/>
+        <stop offset="100%" stop-color="var(--mist)" stop-opacity="1"/>
+      </linearGradient>
+    </defs>
+    <circle cx="930" cy="64" r="30" fill="var(--moon)" opacity="0.88"/>
+    <circle cx="930" cy="64" r="46" fill="var(--moon)" opacity="0.14"/>
+    <polygon points="0,220 0.0,115.9 20.0,115.6 40.0,131.0 60.0,134.1 80.0,122.6 100.0,118.5 120.0,113.4 140.0,93.9 160.0,83.6 180.0,94.8 200.0,101.8 220.0,99.8 240.0,108.4 260.0,116.7 280.0,107.2 300.0,101.9 320.0,115.6 340.0,125.2 360.0,125.2 380.0,134.5 400.0,141.7 420.0,126.3 440.0,108.7 460.0,107.4 480.0,103.8 500.0,94.4 520.0,100.7 540.0,112.0 560.0,104.3 580.0,93.7 600.0,98.5 620.0,101.2 640.0,98.1 660.0,112.0 680.0,133.4 700.0,135.2 720.0,128.7 740.0,131.0 760.0,125.3 780.0,108.8 800.0,108.0 820.0,118.9 840.0,115.1 860.0,105.6 880.0,106.9 900.0,101.3 920.0,84.4 940.0,84.5 960.0,101.1 980.0,108.5 1000.0,112.7 1020.0,127.6 1040.0,132.7 1060.0,119.3 1080.0,115.3 1100.0,124.3 1120.0,123.3 1140.0,119.3 1160.0,127.8 1180.0,127.6 1200.0,107.5 1200,220" fill="var(--m1)" opacity="0.55"/>
+    <polygon points="0,220 0.0,141.6 20.0,140.3 40.0,128.8 60.0,114.0 80.0,117.1 100.0,126.9 120.0,126.5 140.0,128.8 160.0,138.5 180.0,136.7 200.0,127.6 220.0,133.2 240.0,145.0 260.0,146.5 280.0,149.9 300.0,159.5 320.0,154.9 340.0,137.9 360.0,131.7 380.0,131.8 400.0,124.3 420.0,122.8 440.0,133.3 460.0,134.2 480.0,123.4 500.0,122.4 520.0,127.5 540.0,125.1 560.0,129.0 580.0,147.0 600.0,156.4 620.0,151.1 640.0,150.3 660.0,150.6 680.0,138.8 700.0,130.7 720.0,138.4 740.0,141.6 760.0,133.2 780.0,130.9 800.0,131.1 820.0,119.2 840.0,111.0 860.0,121.3 880.0,132.0 900.0,134.1 920.0,143.0 940.0,153.4 960.0,147.2 980.0,138.0 1000.0,142.9 1020.0,146.9 1040.0,142.3 1060.0,145.2 1080.0,151.1 1100.0,140.2 1120.0,124.1 1140.0,121.6 1160.0,120.7 1180.0,114.8 1200.0,121.4 1200,220" fill="var(--m2)" opacity="0.72"/>
+    <polygon points="0,220 0.0,151.4 20.0,150.5 40.0,153.5 60.0,160.5 80.0,157.4 100.0,151.3 120.0,157.3 140.0,165.6 160.0,166.0 180.0,169.7 200.0,176.6 220.0,170.8 240.0,158.0 260.0,154.8 280.0,154.3 300.0,148.2 320.0,148.7 340.0,156.9 360.0,155.6 380.0,147.5 400.0,148.2 420.0,151.6 440.0,149.3 460.0,154.2 480.0,168.4 500.0,173.5 520.0,169.1 540.0,169.3 560.0,168.5 580.0,158.6 600.0,154.2 620.0,160.8 640.0,161.7 660.0,155.1 680.0,154.3 700.0,153.5 720.0,143.5 740.0,139.1 760.0,148.3 780.0,155.3 800.0,157.0 820.0,164.9 840.0,171.5 860.0,165.2 880.0,159.4 900.0,164.2 920.0,166.1 940.0,162.5 960.0,166.0 980.0,169.3 1000.0,159.2 1020.0,147.9 1040.0,147.1 1060.0,145.6 1080.0,141.6 1100.0,148.5 1120.0,159.7 1140.0,159.1 1160.0,155.6 1180.0,160.0 1200.0,161.2 1200,220" fill="var(--m3)" opacity="0.86"/>
+    <polygon points="0,220 0.0,173.8 20.0,176.6 40.0,182.5 60.0,183.3 80.0,184.9 100.0,189.8 120.0,187.4 140.0,179.0 160.0,175.8 180.0,175.9 200.0,172.2 220.0,171.4 240.0,176.7 260.0,177.1 280.0,171.7 300.0,171.2 320.0,173.8 340.0,172.5 360.0,174.5 380.0,183.5 400.0,188.2 420.0,185.6 440.0,185.1 460.0,185.3 480.0,179.4 500.0,175.4 520.0,179.2 540.0,180.8 560.0,176.6 580.0,175.4 600.0,175.5 620.0,169.6 640.0,165.5 660.0,170.6 680.0,176.0 700.0,177.0 720.0,181.5 740.0,186.7 760.0,183.6 780.0,179.0 800.0,181.4 820.0,183.5 840.0,181.1 860.0,182.6 880.0,185.5 900.0,180.1 920.0,172.1 940.0,170.8 960.0,170.4 980.0,167.4 1000.0,170.7 1020.0,178.4 1040.0,179.2 1060.0,176.4 1080.0,178.8 1100.0,180.3 1120.0,177.7 1140.0,180.4 1160.0,187.8 1180.0,188.4 1200.0,184.1 1200,220" fill="var(--m4)"/>
+    <rect x="0" y="168" width="1200" height="52" fill="url(#mist)"/>
+  </svg>
+  <div class="hero-title">
+    <h1>仙剑奇侠传四<span class="seal">问情论剑</span></h1>
+    <p>AGENT-PAL4 · 3D C++20 无头引擎与长程智能体评测基准 (OpenPAL4 Runtime)</p>
+  </div>
+</header>
+
+<main>
+  <input type="radio" name="main-tab" id="tab-stats" class="tabs-Radio" checked>
+  <input type="radio" name="main-tab" id="tab-campaigns" class="tabs-Radio">
+  <input type="radio" name="main-tab" id="tab-cpk" class="tabs-Radio">
+  <input type="radio" name="main-tab" id="tab-verify" class="tabs-Radio">
+
+  <nav class="tabs-nav" aria-label="排行榜视图切换">
+    <label for="tab-stats">🏠 基准总览与排行榜</label>
+    <label for="tab-campaigns">壹 · Pure vs Normal 自主通关榜 (4)</label>
+    <label for="tab-cpk">贰 · 原版 CPK 全四章 24 关主线矩阵</label>
+    <label for="tab-verify">叁 · 引擎架构与重放核验</label>
+  </nav>
+
+  <!-- ==================== TAB 1: 基准总览与排行榜 ==================== -->
+  <section id="pane-stats" class="tab-pane">
+    <div class="intro-box">
+      <div style="font-size:15px;font-weight:700;margin-bottom:6px;font-family:var(--font-serif);">
+        为什么用《仙剑奇侠传四》(3D RPG) 评测长程自主智能体？
+      </div>
+      <div style="font-size:13.5px;color:var(--ink-soft);">
+        不同于 2D 网格迷宫，<strong>agent-pal4</strong> 直接建立在 <strong>OpenPAL4</strong> 的原生 C++20 <code>ChapterHost</code> 与 <strong>AngelScript 2.2 (<code>.csb</code>) 字节码虚拟机</strong>之上，通过 JSON-Lines 协议向大模型智能体暴露真实的 3D 连续坐标空间、<code>.nav</code> 三角形导航网格、<code>.evf</code> 3D 触发器碰撞、多领队技能切换与回合制五灵战斗状态机，支持 <strong>Pure 纯净反作弊模式</strong> 与 <strong>Normal 诊断模式</strong> 双轨评测。
+      </div>
+      <div class="pillars">
+        <div class="pillar">
+          <strong>🏔️ 1. 3D 连续空间与 NavMesh 碰撞</strong>
+          <span>真实执行 <code>PlayerFreeMovement</code> 相机相对方向运动、<code>SceneCollision</code> 球体-三角形碰撞与 3D <code>.nav</code> A* 导航网格寻路。</span>
+        </div>
+        <div class="pillar">
+          <strong>📜 2. 原版 CSB 虚拟机全指令闭环</strong>
+          <span>完整实现 AngelScript 2.2 字节码（含 64-bit <code>double</code> 浮点指令 <code>72..84</code>）与 266 个原生系统调用，驱动全部 43 个原版 <code>.csb</code> 脚本模块。</span>
+        </div>
+        <div class="pillar">
+          <strong>🛡️ 3. Pure 模式消偏与反作弊</strong>
+          <span>隐藏 <code>quest_stage</code>、<code>mvar</code>、<code>script</code> 等内部剧透字段，禁用 <code>warp_scene</code>/<code>set_quest_stage</code>/<code>inspect_csb</code>，迫使智能体依赖纯正空间观测与剧情推理。</span>
+        </div>
+        <div class="pillar">
+          <strong>⚔️ 4. 全四章主线与确定性重放</strong>
+          <span>覆盖青鸾峰、石沉溪洞、寿阳柳府、女萝岩、淮南王陵、千佛塔、须臾幻境、鬼界、幻瞑界至卷云台终局决战，每份成绩均由 <code>verify.mjs</code> 逐步重放核验。</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="v">36 步</div>
+        <div class="l">Pure 纯净模式全四章通关</div>
+        <div class="s">gemini-4-argon-medium · 较 Normal 模式少用 25.0% 步数</div>
+      </div>
+      <div class="kpi">
+        <div class="v">24 / 24 关</div>
+        <div class="l">原版零售 CPK 全四章主线</div>
+        <div class="s"><code>10100 → 170000</code> · Pure &amp; Normal 双模式 100% 通过</div>
+      </div>
+      <div class="kpi">
+        <div class="v">19 / 19 项</div>
+        <div class="l">无头引擎契约测试矩阵</div>
+        <div class="s">3D 碰撞、领队切换、五灵战斗、铸剑与结局闭环</div>
+      </div>
+      <div class="kpi">
+        <div class="v">43 模块 / 266 调</div>
+        <div class="l">原版 .csb 脚本与系统调用</div>
+        <div class="s">零 <code>script_error</code> · 零 <code>unhandled_calls</code></div>
+      </div>
+      <div class="kpi">
+        <div class="v">4 / 4 局</div>
+        <div class="l">确定性重放核验通过</div>
+        <div class="s"><code>node bench/verify.mjs</code> SHA-256 签名一致</div>
+      </div>
+    </div>
+
+    <h2>🏆 问情论剑 · 榜首三甲席位<small>按战役通关进度优先、Pure 纯净模式优先、工具调用步数最少排序</small></h2>
+    <div class="podium">
+      <div class="pod gold">
+        <div class="medal">🥇 状元 · Pure 纯净模式全四章自主通关</div>
+        <div class="name">gemini-4-argon-medium</div>
+        <div class="score">100% 通关 · 36 步</div>
+        <div class="meta">
+          <span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span> <span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 724fad874ef10ab0…">已核验 ✓</span><br>
+          终局：<code>M20/1</code> (琼华飞升·卷云台决战) · 全员 Lv.50 · 3 场 Boss 战全胜<br>
+          Token：89.3k · 耗时：159.6s · 装备：射日猎弓 / 望舒剑 / 土灵珠 / 羲和剑
+        </div>
+      </div>
+      <div class="pod silver">
+        <div class="medal">🥈 榜眼 · Normal 标准模式全四章自主通关</div>
+        <div class="name">gemini-4-argon-medium</div>
+        <div class="score">100% 通关 · 48 步</div>
+        <div class="meta">
+          <span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span> <span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 7903cba5ebc115cb…">已核验 ✓</span><br>
+          终局：<code>M20/1</code> (琼华飞升·卷云台决战) · 全员 Lv.50 · 3 场 Boss 战全胜<br>
+          Token：58.9k · 耗时：131.1s · 渲染：221 DrawCalls
+        </div>
+      </div>
+      <div class="pod bronze">
+        <div class="medal">🥉 探花 · 原版零售 CPK 全四章 24 关全链路</div>
+        <div class="name">OpenPAL4 Real-CPK Verifier</div>
+        <div class="score">100% 通关 · 24 / 24 关</div>
+        <div class="meta">
+          <span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span> <span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span> <span class="vbadge ok">已核验 ✓</span><br>
+          覆盖原版 <code>script.cpk</code> 全部 43 个 <code>.csb</code> 模块 (<code>mvar 10100 → 170000</code>)<br>
+          从青鸾峰清晨上香、淮南王陵、须臾幻境 99 酒试炼、鬼界、幻瞑界直至卷云台挽弓射日大结局
+        </div>
+      </div>
+    </div>
+
+    <h2>📊 模型能力卡片 · Model Card 标准化百分制对比<small>所有指标归一化至 0–100%（越高越优）</small></h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>评测档位 / 模型配置</th>
+            <th>运行模式</th>
+            <th class="num">战役通关率</th>
+            <th class="num">青鸾峰序章</th>
+            <th class="num">第一章·石沉溪洞</th>
+            <th class="num">第二章·女萝岩</th>
+            <th class="num">第三章·承天剑台</th>
+            <th class="num">第四章·卷云台终局</th>
+            <th class="num">步数效率分</th>
+            <th>核验状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Pure)</div></td>
+            <td><span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span></td>
+            <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num"><strong>100.0%</strong> (36步)</td>
+            <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 724fad874ef10ab0…">已核验 ✓</span></td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Full 4-Chapter Campaign (Normal)</div></td>
+            <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
+            <td class="num"><strong style="color:var(--ok)">100.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num"><strong>75.0%</strong> (48步)</td>
+            <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 7903cba5ebc115cb…">已核验 ✓</span></td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Chapter 1 Benchmark (Shichenxi Cave)</div></td>
+            <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
+            <td class="num"><strong>50.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">100%</td>
+            <td class="num">-</td>
+            <td class="num">-</td>
+            <td class="num">-</td>
+            <td class="num">81.8% (22步)</td>
+            <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: …">已核验 ✓</span></td>
+          </tr>
+          <tr>
+            <td><div class="mname">gemini-4-argon-medium</div><div class="sub">Opening Trial Benchmark (Qingluan Peak)</div></td>
+            <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
+            <td class="num"><strong>25.0%</strong></td>
+            <td class="num">100%</td>
+            <td class="num">-</td>
+            <td class="num">-</td>
+            <td class="num">-</td>
+            <td class="num">-</td>
+            <td class="num">88.9% (9步)</td>
+            <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: …">已核验 ✓</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>📈 帕累托前沿 · 通关进度 × 工具调用步数与 Token 消耗</h2>
+    <div class="charts">
+      <div class="chart-card">
+        <h3>通关进度 (%) × 工具调用步数 (Tool Calls)</h3>
+        <svg viewBox="0 0 580 300" class="scatter" role="img" aria-label="通关进度与工具调用步数帕累托前沿图">
+    <line x1="56" y1="258.0" x2="550" y2="258.0" class="grid"/><text x="48" y="262" class="ax" text-anchor="end">0%</text><line x1="56" y1="202.8" x2="550" y2="202.8" class="grid"/><text x="48" y="206.8" class="ax" text-anchor="end">25%</text><line x1="56" y1="147.5" x2="550" y2="147.5" class="grid"/><text x="48" y="151.5" class="ax" text-anchor="end">50%</text><line x1="56" y1="92.3" x2="550" y2="92.3" class="grid"/><text x="48" y="96.3" class="ax" text-anchor="end">75%</text><line x1="56" y1="37.0" x2="550" y2="37.0" class="grid"/><text x="48" y="41" class="ax" text-anchor="end">100%</text><line x1="56.0" y1="26" x2="56.0" y2="258" class="grid"/><text x="56.0" y="274" class="ax" text-anchor="middle">0步</text><line x1="138.3" y1="26" x2="138.3" y2="258" class="grid"/><text x="138.3" y="274" class="ax" text-anchor="middle">10步</text><line x1="220.7" y1="26" x2="220.7" y2="258" class="grid"/><text x="220.7" y="274" class="ax" text-anchor="middle">20步</text><line x1="303.0" y1="26" x2="303.0" y2="258" class="grid"/><text x="303.0" y="274" class="ax" text-anchor="middle">30步</text><line x1="385.3" y1="26" x2="385.3" y2="258" class="grid"/><text x="385.3" y="274" class="ax" text-anchor="middle">40步</text><line x1="467.7" y1="26" x2="467.7" y2="258" class="grid"/><text x="467.7" y="274" class="ax" text-anchor="middle">50步</text><line x1="550.0" y1="26" x2="550.0" y2="258" class="grid"/><text x="550.0" y="274" class="ax" text-anchor="middle">60步</text>
+    <polyline fill="none" stroke="var(--seal)" stroke-width="2" stroke-dasharray="5,4" points="130.1,202.8 237.1,147.5 352.4,37.0"/>
+    <g class="pt"><circle cx="352.4" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [PURE] (36步, 100%)</title></circle><text x="352.4" y="27" text-anchor="middle">PURE · 36步</text></g><g class="pt"><circle cx="451.2" cy="37.0" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (48步, 100%)</title></circle><text x="451.2" y="52" text-anchor="middle">NORMAL · 48步</text></g><g class="pt"><circle cx="237.1" cy="147.5" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (22步, 50%)</title></circle><text x="237.1" y="137.5" text-anchor="middle">NORMAL · 22步</text></g><g class="pt"><circle cx="130.1" cy="202.8" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [NORMAL] (9步, 25%)</title></circle><text x="130.1" y="217.8" text-anchor="middle">NORMAL · 9步</text></g>
+    <text x="303" y="294" class="ax-title" text-anchor="middle">工具调用步数 (Tool Calls，越少越优 → 左上为帕累托前沿)</text>
+    <text x="16" y="142" class="ax-title" text-anchor="middle" transform="rotate(-90 16 142)">战役通关进度 (%)</text>
+  </svg>
+      </div>
+      <div class="chart-card">
+        <h3>通关进度 (%) × 总 Token 消耗 (Total Tokens)</h3>
+        <svg viewBox="0 0 580 300" class="scatter" role="img" aria-label="通关进度与Token消耗散点图">
+    <line x1="56" y1="258.0" x2="550" y2="258.0" class="grid"/><text x="48" y="262" class="ax" text-anchor="end">0%</text><line x1="56" y1="202.8" x2="550" y2="202.8" class="grid"/><text x="48" y="206.8" class="ax" text-anchor="end">25%</text><line x1="56" y1="147.5" x2="550" y2="147.5" class="grid"/><text x="48" y="151.5" class="ax" text-anchor="end">50%</text><line x1="56" y1="92.3" x2="550" y2="92.3" class="grid"/><text x="48" y="96.3" class="ax" text-anchor="end">75%</text><line x1="56" y1="37.0" x2="550" y2="37.0" class="grid"/><text x="48" y="41" class="ax" text-anchor="end">100%</text><line x1="56.0" y1="26" x2="56.0" y2="258" class="grid"/><text x="56.0" y="274" class="ax" text-anchor="middle">0k</text><line x1="154.8" y1="26" x2="154.8" y2="258" class="grid"/><text x="154.8" y="274" class="ax" text-anchor="middle">20k</text><line x1="253.6" y1="26" x2="253.6" y2="258" class="grid"/><text x="253.6" y="274" class="ax" text-anchor="middle">40k</text><line x1="352.4" y1="26" x2="352.4" y2="258" class="grid"/><text x="352.4" y="274" class="ax" text-anchor="middle">60k</text><line x1="451.2" y1="26" x2="451.2" y2="258" class="grid"/><text x="451.2" y="274" class="ax" text-anchor="middle">80k</text><line x1="550.0" y1="26" x2="550.0" y2="258" class="grid"/><text x="550.0" y="274" class="ax" text-anchor="middle">100k</text>
+    <g class="pt"><circle cx="497.4" cy="37.0" r="6.5" fill="var(--ok)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [pure] · 89.3k tokens · 159.6s</title></circle><text x="497.4" y="27" text-anchor="middle">PURE · 89.3k</text></g><g class="pt"><circle cx="347.1" cy="37.0" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 58.9k tokens · 131.1s</title></circle><text x="347.1" y="52" text-anchor="middle">NORMAL · 58.9k</text></g><g class="pt"><circle cx="190.6" cy="147.5" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 27.2k tokens · 51.9s</title></circle><text x="190.6" y="137.5" text-anchor="middle">NORMAL · 27.2k</text></g><g class="pt"><circle cx="228.9" cy="202.8" r="6.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"><title>gemini-4-argon-medium [normal] · 35.0k tokens · 74.5s</title></circle><text x="228.9" y="217.8" text-anchor="middle">NORMAL · 35.0k</text></g>
+    <text x="303" y="294" class="ax-title" text-anchor="middle">总 Token 消耗 (Total Tokens，含上下文推理)</text>
+    <text x="16" y="142" class="ax-title" text-anchor="middle" transform="rotate(-90 16 142)">战役通关进度 (%)</text>
+  </svg>
+      </div>
+    </div>
+
+    <h2>📋 自主智能体运行总榜<small>数据直接来自 <code>bench/out/*/result.json</code> 与 <code>verify.json</code></small></h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>模型 / 运行 ID</th>
+            <th>模式</th>
+            <th>战役范围与终局场景</th>
+            <th class="num">进度</th>
+            <th class="num">工具步数</th>
+            <th class="num">胜场 / 等级</th>
+            <th class="num">GLES3 渲染</th>
+            <th class="num">Token 消耗</th>
+            <th class="num">耗时</th>
+            <th>重放核验</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+      <td class="rank">1</td>
+      <td>
+        <div class="mname">gemini-4-argon-medium</div>
+        <div class="sub"><code>agy-cli</code> · <code>argon-20261105T032438</code></div>
+      </td>
+      <td><span class="mbadge pure" title="Pure 纯净模式：隐藏内部变量与脚本函数名，禁用调试跳关指令">PURE 纯净</span></td>
+      <td>
+        <strong>全四章终局通关 (Act I–IV)</strong>
+        <div class="sub">终局场景：<code>M20/1</code> (琼华飞升·卷云台决战)</div>
+      </td>
+      <td class="num"><strong style="color:var(--ok)">100%</strong></td>
+      <td class="num"><strong>36</strong> 步</td>
+      <td class="num">3 胜 · Lv.50</td>
+      <td class="num">39 DC / 78 Tri</td>
+      <td class="num">89.3k<div class="sub">缓存 537.0k</div></td>
+      <td class="num">159.6s</td>
+      <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 724fad874ef10ab0…">已核验 ✓</span></td>
+    </tr>
+<tr>
+      <td class="rank">2</td>
+      <td>
+        <div class="mname">gemini-4-argon-medium</div>
+        <div class="sub"><code>agy-cli</code> · <code>argon-20261103T204552</code></div>
+      </td>
+      <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
+      <td>
+        <strong>全四章终局通关 (Act I–IV)</strong>
+        <div class="sub">终局场景：<code>M20/1</code> (琼华飞升·卷云台决战)</div>
+      </td>
+      <td class="num"><strong style="color:var(--ok)">100%</strong></td>
+      <td class="num"><strong>48</strong> 步</td>
+      <td class="num">3 胜 · Lv.50</td>
+      <td class="num">221 DC / 442 Tri</td>
+      <td class="num">58.9k<div class="sub">缓存 294.7k</div></td>
+      <td class="num">131.1s</td>
+      <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 7903cba5ebc115cb…">已核验 ✓</span></td>
+    </tr>
+<tr>
+      <td class="rank">3</td>
+      <td>
+        <div class="mname">gemini-4-argon-medium</div>
+        <div class="sub"><code>agy-cli</code> · <code>argon-20261103T201924</code></div>
+      </td>
+      <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
+      <td>
+        <strong>第一章通关 (石沉溪洞)</strong>
+        <div class="sub">终局场景：<code>M01/2</code> (石沉溪洞·冰封墓室)</div>
+      </td>
+      <td class="num"><strong style="color:var(--ok)">50%</strong></td>
+      <td class="num"><strong>22</strong> 步</td>
+      <td class="num">1 胜 · Lv.1</td>
+      <td class="num">102 DC / 204 Tri</td>
+      <td class="num">27.2k<div class="sub">缓存 58.6k</div></td>
+      <td class="num">51.9s</td>
+      <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: 5680d5c70badab64…">已核验 ✓</span></td>
+    </tr>
+<tr>
+      <td class="rank">4</td>
+      <td>
+        <div class="mname">gemini-4-argon-medium</div>
+        <div class="sub"><code>agy-cli</code> · <code>argon-20261103T194927</code></div>
+      </td>
+      <td><span class="mbadge normal" title="Normal 标准模式：暴露完整语义名称与诊断状态">NORMAL 标准</span></td>
+      <td>
+        <strong>序章试炼通关 (青鸾峰)</strong>
+        <div class="sub">终局场景：<code>undefined/undefined</code> ()</div>
+      </td>
+      <td class="num"><strong style="color:var(--ok)">25%</strong></td>
+      <td class="num"><strong>9</strong> 步</td>
+      <td class="num">0 胜 · Lv.1</td>
+      <td class="num">66 DC / 132 Tri</td>
+      <td class="num">35.0k<div class="sub">缓存 121.9k</div></td>
+      <td class="num">74.5s</td>
+      <td><span class="vbadge ok" title="确定性重放核验通过 · SHA-256: ef4b25ab482cfae7…">已核验 ✓</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="cta-grid">
+      <div class="cta-card">
+        <h3>🚀 提交新模型成绩 (Submit a Pull Request)</h3>
+        <p style="font-size:13px;color:var(--ink-soft);margin:6px 0 10px;">
+          欢迎使用任意大模型或 Agent 框架挑战 <code>agent-pal4</code>！只需运行以下三步并通过重放核验即可提交 PR 上榜：
+        </p>
+        <pre class="bib"><code># 1. 运行 Pure 纯净模式全四章自主评测
+node bench/run-argon.mjs --mode pure
+
+# 2. 运行确定性重放核验（生成 verify.json）
+node bench/verify.mjs
+
+# 3. 重新生成静态排行榜页面
+node bench/board.mjs</code></pre>
+      </div>
+      <div class="cta-card">
+        <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('bib-src').innerText).then(()=>{this.innerText='已复制 ✓';setTimeout(()=>this.innerText='复制 BibTeX',1500)})">复制 BibTeX</button>
+        <h3>📖 学术引用 (Citation / BibTeX)</h3>
+        <pre id="bib-src" class="bib"><code>@misc{liu2026agentpal4bench,
+  author       = {Jianming Liu},
+  title        = {agent-pal4-bench: A Headless C++20 \&amp; WebAssembly 3D RPG Agent Benchmark on Chinese Paladin IV (OpenPAL4)},
+  year         = {2026},
+  howpublished = {\url{https://github.com/jianmliu/agent-pal4}},
+  note         = {Evaluates long-horizon 3D spatial navigation, AngelScript 2.2 CSB VM execution, and Pure-mode de-biased reasoning across all 4 chapters of Chinese Paladin IV}
+}</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== TAB 2: Pure vs Normal 自主通关榜 ==================== -->
+  <section id="pane-campaigns" class="tab-pane">
+    <h2>壹 · Pure 纯净模式 vs Normal 标准模式深度对比<small>为什么 Pure 模式反而比 Normal 模式节省了 25% 的工具调用步数？</small></h2>
+    <div class="intro-box">
+      <p style="margin:0 0 10px;font-size:13.8px;">
+        在 <code>argon-20261105T032438</code> (<strong>Pure 模式</strong>) 中，<code>gemini-4-argon-medium</code> 仅用 <strong>36 步</strong>工具调用便完成了从青鸾峰到卷云台终局的全四章通关，比 Normal 模式（48 步）减少了 <strong>12 步 (-25.0%)</strong>：
+      </p>
+      <div class="pillars">
+        <div class="pillar">
+          <strong>🔒 观测脱敏 (Observation Sanitization)</strong>
+          <span>Pure 模式剥离了 <code>quest_stage</code>、<code>trial_cleared</code>、<code>chapter1_cleared</code>、<code>diagnostics</code> 以及 NPC/物体/事件的内部脚本名 <code>script</code>。</span>
+        </div>
+        <div class="pillar">
+          <strong>🚫 禁用跳关后门 (Debug Commands Blocked)</strong>
+          <span>在 Pure 模式下调用 <code>warp_scene</code>、<code>set_quest_stage</code>、<code>inspect_csb</code> 或传入内部 <code>func*</code> 名称会被引擎直接拦截拒绝。</span>
+        </div>
+        <div class="pillar">
+          <strong>🧭 3D 传送门穿透与语义对齐</strong>
+          <span>通过暴露 <code>.evf</code> 传送门 3D 几何中心与定向 <code>interact(target)</code> 自动寻路对齐，智能体不再需要在传送门边缘反复试探微调坐标。</span>
+        </div>
+        <div class="pillar">
+          <strong>⚔️ 零无效战斗指令</strong>
+          <span>Pure 模式轨迹中 3 场 Boss 战（魁召、槐妖长老、玄霄与夙瑶）均为一击必杀且无多余的战后空挥调用。</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>🔍 Pure vs Normal 制度与指标对照表</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th><code>--mode pure</code> (Pure 纯净评测模式)</th>
+            <th><code>--mode normal</code> (Normal 研发诊断模式)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>任务进度变量 (<code>quest_stage</code> / <code>mvar</code>)</strong></td>
+            <td><span class="vbadge ok">完全隐藏</span> 仅能通过 NPC 对白、背包道具与场景变化推断剧情进度</td>
+            <td><span class="tag">直接暴露</span> 返回当前主线 <code>quest_stage</code> 数值</td>
+          </tr>
+          <tr>
+            <td><strong>脚本函数名 (<code>npc.script</code> / <code>event.script</code>)</strong></td>
+            <td><span class="vbadge ok">完全隐藏</span> 仅暴露场景实体名称与 3D 坐标/距离</td>
+            <td><span class="tag">直接暴露</span> 返回绑定的 AngelScript 函数名</td>
+          </tr>
+          <tr>
+            <td><strong>调试工具 (<code>warp_scene</code> / <code>set_quest_stage</code> / <code>inspect_csb</code>)</strong></td>
+            <td><span class="vbadge ok">硬件级禁用</span> 引擎返回 <code>disabled in pure mode</code></td>
+            <td><span class="tag">允许调用</span> 用于 Play-and-Fix 快速定位引擎断点</td>
+          </tr>
+          <tr>
+            <td><strong>全四章自主通关步数 (<code>gemini-4-argon-medium</code>)</strong></td>
+            <td><strong style="color:var(--ok)">36 步</strong> (<code>argon-20261105T032438</code>)</td>
+            <td><strong>48 步</strong> (<code>argon-20261103T204552</code>)</td>
+          </tr>
+          <tr>
+            <td><strong>全四章原版 CPK 24 关主线验证</strong></td>
+            <td><strong style="color:var(--ok)">24 / 24 关 (100% 通过)</strong></td>
+            <td><strong style="color:var(--ok)">24 / 24 关 (100% 通过)</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>📜 Pure 纯净模式全四章 36 步完整通关轨迹 (<code>argon-20261105T032438</code>)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">步数</th>
+            <th>工具调用 (Tool Call)</th>
+            <th>所在世界 / 场景</th>
+            <th>当前领队与 3D 坐标</th>
+            <th>累计胜场</th>
+            <th>引擎事件反馈 (Event / Dialog)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+        <td class="num">#1</td>
+        <td><code>interact(target=&quot;HanLingsha&quot;)</code></td>
+        <td><code>Q01/N01</code> · 青鸾峰·石沉溪洞</td>
+        <td>云天河 <span class="sub">(35, 0, 0)</span></td>
+        <td>0 胜</td>
+        <td class="sub">opened_dialog:韩菱纱：野人！北面(z=60)是石沉溪洞死路岩壁，快去西侧(-40, 0, 25)打开木匣取回猎弓，再换我带</td>
+      </tr>
+<tr>
+        <td class="num">#2</td>
+        <td><code>interact()</code></td>
+        <td><code>Q01/N01</code> · 青鸾峰·石沉溪洞</td>
+        <td>云天河 <span class="sub">(35, 0, 0)</span></td>
+        <td>0 胜</td>
+        <td class="sub">confirmed_dialog:韩菱纱：野人！北面(z=60)是石沉溪洞死路岩壁，快去西侧(-40, 0, 25)打开木匣取回猎弓，再</td>
+      </tr>
+<tr>
+        <td class="num">#3</td>
+        <td><code>interact(target=&quot;AncestralBowChest&quot;)</code></td>
+        <td><code>Q01/N01</code> · 青鸾峰·石沉溪洞</td>
+        <td>云天河 <span class="sub">(-40, 0, 25)</span></td>
+        <td>0 胜</td>
+        <td class="sub">opened_dialog:开启云天青遗留木匣，获得并装备【射日猎弓】×1！</td>
+      </tr>
+<tr>
+        <td class="num">#4</td>
+        <td><code>interact()</code></td>
+        <td><code>Q01/N01</code> · 青鸾峰·石沉溪洞</td>
+        <td>云天河 <span class="sub">(-40, 0, 25)</span></td>
+        <td>0 胜</td>
+        <td class="sub">confirmed_dialog:开启云天青遗留木匣，获得并装备【射日猎弓】×1！</td>
+      </tr>
+<tr>
+        <td class="num">#5</td>
+        <td><code>switch_leader(index=1)</code></td>
+        <td><code>Q01/N01</code> · 青鸾峰·石沉溪洞</td>
+        <td>韩菱纱 <span class="sub">(-40, 0, 25)</span></td>
+        <td>0 胜</td>
+        <td class="sub">leader_switched</td>
+      </tr>
+<tr>
+        <td class="num">#6</td>
+        <td><code>interact(target=&quot;CaveExitPortal&quot;)</code></td>
+        <td><code>Q01/N01</code> · 青鸾峰·石沉溪洞</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>0 胜</td>
+        <td class="sub">opened_dialog:石沉溪洞外门机关开启！正在进入石沉溪洞深处（M01/1）……</td>
+      </tr>
+<tr>
+        <td class="num">#7</td>
+        <td><code>interact()</code></td>
+        <td><code>M01/1</code> · 石沉溪洞·符灵大厅</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 35)</span></td>
+        <td>0 胜</td>
+        <td class="sub">confirmed_dialog:石沉溪洞外门机关开启！正在进入石沉溪洞深处（M01/1）……</td>
+      </tr>
+<tr>
+        <td class="num">#8</td>
+        <td><code>interact(target=&quot;KuiZhao&quot;)</code></td>
+        <td><code>M01/1</code> · 石沉溪洞·符灵大厅</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>0 胜</td>
+        <td class="sub">interaction_dispatched</td>
+      </tr>
+<tr>
+        <td class="num">#9</td>
+        <td><code>combat_action(action=&quot;skill&quot;)</code></td>
+        <td><code>M01/1</code> · 石沉溪洞·符灵大厅</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>1 胜</td>
+        <td class="sub">combat_victory</td>
+      </tr>
+<tr>
+        <td class="num">#10</td>
+        <td><code>interact()</code></td>
+        <td><code>M01/1</code> · 石沉溪洞·符灵大厅</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>1 胜</td>
+        <td class="sub">confirmed_dialog:魁召：剑灵试炼通过！通往冰封墓室的石门已经开启，快向南(0, 0, -65)前进吧！</td>
+      </tr>
+<tr>
+        <td class="num">#11</td>
+        <td><code>interact(target=&quot;TombChamberDoor&quot;)</code></td>
+        <td><code>M01/1</code> · 石沉溪洞·符灵大厅</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>1 胜</td>
+        <td class="sub">opened_dialog:击败魁召后石门轰然开启，进入石沉溪洞·冰封墓室（M01/2）！</td>
+      </tr>
+<tr>
+        <td class="num">#12</td>
+        <td><code>interact()</code></td>
+        <td><code>M01/2</code> · 石沉溪洞·冰封墓室</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 35)</span></td>
+        <td>1 胜</td>
+        <td class="sub">confirmed_dialog:击败魁召后石门轰然开启，进入石沉溪洞·冰封墓室（M01/2）！</td>
+      </tr>
+<tr>
+        <td class="num">#13</td>
+        <td><code>interact(target=&quot;WangshuSwordAltar&quot;)</code></td>
+        <td><code>M01/2</code> · 石沉溪洞·冰封墓室</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 0)</span></td>
+        <td>1 胜</td>
+        <td class="sub">opened_dialog:云天河握住冰封古剑，寒冰瞬间碎裂！获得并装备【望舒剑】！现在可以向南(0, 0, -65)离开石沉溪洞下山了</td>
+      </tr>
+<tr>
+        <td class="num">#14</td>
+        <td><code>interact()</code></td>
+        <td><code>M01/2</code> · 石沉溪洞·冰封墓室</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 0)</span></td>
+        <td>1 胜</td>
+        <td class="sub">confirmed_dialog:云天河握住冰封古剑，寒冰瞬间碎裂！获得并装备【望舒剑】！现在可以向南(0, 0, -65)离开石沉溪洞</td>
+      </tr>
+<tr>
+        <td class="num">#15</td>
+        <td><code>interact(target=&quot;LeaveQingluanPeakPortal&quot;)</code></td>
+        <td><code>M01/2</code> · 石沉溪洞·冰封墓室</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>1 胜</td>
+        <td class="sub">opened_dialog:云天河与韩菱纱携【望舒剑】走出石沉溪洞，踏上前往寿阳城与女萝岩的旅途！正在进入第二章：寿阳城·柳府（Q02/</td>
+      </tr>
+<tr>
+        <td class="num">#16</td>
+        <td><code>interact()</code></td>
+        <td><code>Q02/N01</code> · 寿阳城·柳府前庭</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 35)</span></td>
+        <td>1 胜</td>
+        <td class="sub">confirmed_dialog:云天河与韩菱纱携【望舒剑】走出石沉溪洞，踏上前往寿阳城与女萝岩的旅途！正在进入第二章：寿阳城·柳府（Q</td>
+      </tr>
+<tr>
+        <td class="num">#17</td>
+        <td><code>interact(target=&quot;LiuMengli&quot;)</code></td>
+        <td><code>Q02/N01</code> · 寿阳城·柳府前庭</td>
+        <td>韩菱纱 <span class="sub">(30, 0, 0)</span></td>
+        <td>1 胜</td>
+        <td class="sub">opened_dialog:柳梦璃加入队伍！全队休憩恢复并习得五灵仙术，获赠盘缠 1500 文！现在请向南(0, 0, -65)前往女萝</td>
+      </tr>
+<tr>
+        <td class="num">#18</td>
+        <td><code>interact()</code></td>
+        <td><code>Q02/N01</code> · 寿阳城·柳府前庭</td>
+        <td>韩菱纱 <span class="sub">(30, 0, 0)</span></td>
+        <td>1 胜</td>
+        <td class="sub">confirmed_dialog:柳梦璃加入队伍！全队休憩恢复并习得五灵仙术，获赠盘缠 1500 文！现在请向南(0, 0, -65)前</td>
+      </tr>
+<tr>
+        <td class="num">#19</td>
+        <td><code>interact(target=&quot;NvLuoYanPortal&quot;)</code></td>
+        <td><code>Q02/N01</code> · 寿阳城·柳府前庭</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>1 胜</td>
+        <td class="sub">opened_dialog:离开寿阳城柳府，进入女萝岩·底层大殿（M04/1）！</td>
+      </tr>
+<tr>
+        <td class="num">#20</td>
+        <td><code>interact()</code></td>
+        <td><code>M04/1</code> · 女萝岩·底层大殿</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 35)</span></td>
+        <td>1 胜</td>
+        <td class="sub">confirmed_dialog:离开寿阳城柳府，进入女萝岩·底层大殿（M04/1）！</td>
+      </tr>
+<tr>
+        <td class="num">#21</td>
+        <td><code>interact(target=&quot;HuaiYaoElder&quot;)</code></td>
+        <td><code>M04/1</code> · 女萝岩·底层大殿</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>1 胜</td>
+        <td class="sub">interaction_dispatched</td>
+      </tr>
+<tr>
+        <td class="num">#22</td>
+        <td><code>combat_action(action=&quot;skill&quot;)</code></td>
+        <td><code>M04/1</code> · 女萝岩·底层大殿</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>2 胜</td>
+        <td class="sub">combat_victory</td>
+      </tr>
+<tr>
+        <td class="num">#23</td>
+        <td><code>interact()</code></td>
+        <td><code>M04/1</code> · 女萝岩·底层大殿</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>2 胜</td>
+        <td class="sub">confirmed_dialog:击败女萝岩槐妖长老！全队等级提升至 18 级，获得【土灵珠】×1！现在可以向南(0, 0, -65)前</td>
+      </tr>
+<tr>
+        <td class="num">#24</td>
+        <td><code>interact(target=&quot;QionghuaAscentPortal&quot;)</code></td>
+        <td><code>M04/1</code> · 女萝岩·底层大殿</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>2 胜</td>
+        <td class="sub">opened_dialog:第二章通关！云天河、韩菱纱、柳梦璃踏上太一仙径，登上昆仑琼华派·剑舞坪（Q07/N01）！</td>
+      </tr>
+<tr>
+        <td class="num">#25</td>
+        <td><code>interact()</code></td>
+        <td><code>Q07/N01</code> · 昆仑琼华派·剑舞坪</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 35)</span></td>
+        <td>2 胜</td>
+        <td class="sub">confirmed_dialog:第二章通关！云天河、韩菱纱、柳梦璃踏上太一仙径，登上昆仑琼华派·剑舞坪（Q07/N01）！</td>
+      </tr>
+<tr>
+        <td class="num">#26</td>
+        <td><code>interact(target=&quot;MurongZiying&quot;)</code></td>
+        <td><code>Q07/N01</code> · 昆仑琼华派·剑舞坪</td>
+        <td>韩菱纱 <span class="sub">(-30, 0, 0)</span></td>
+        <td>2 胜</td>
+        <td class="sub">opened_dialog:慕容紫英加入队伍（全员四人集结）并传授剑道仙术！请再去东侧(35, 0, 20)的【承天剑台】铸造并取出【羲</td>
+      </tr>
+<tr>
+        <td class="num">#27</td>
+        <td><code>interact()</code></td>
+        <td><code>Q07/N01</code> · 昆仑琼华派·剑舞坪</td>
+        <td>韩菱纱 <span class="sub">(-30, 0, 0)</span></td>
+        <td>2 胜</td>
+        <td class="sub">confirmed_dialog:慕容紫英加入队伍（全员四人集结）并传授剑道仙术！请再去东侧(35, 0, 20)的【承天剑台】铸造并取</td>
+      </tr>
+<tr>
+        <td class="num">#28</td>
+        <td><code>interact(target=&quot;ChengtianSwordForge&quot;)</code></td>
+        <td><code>Q07/N01</code> · 昆仑琼华派·剑舞坪</td>
+        <td>韩菱纱 <span class="sub">(35, 0, 20)</span></td>
+        <td>2 胜</td>
+        <td class="sub">opened_dialog:在承天剑台耗费 1000 文灵材淬炼，获得【羲和剑】并强化慕容紫英剑装！现在向南(0, 0, -65)前往卷</td>
+      </tr>
+<tr>
+        <td class="num">#29</td>
+        <td><code>interact()</code></td>
+        <td><code>Q07/N01</code> · 昆仑琼华派·剑舞坪</td>
+        <td>韩菱纱 <span class="sub">(35, 0, 20)</span></td>
+        <td>2 胜</td>
+        <td class="sub">confirmed_dialog:在承天剑台耗费 1000 文灵材淬炼，获得【羲和剑】并强化慕容紫英剑装！现在向南(0, 0, -65)</td>
+      </tr>
+<tr>
+        <td class="num">#30</td>
+        <td><code>interact(target=&quot;JuanyuntaiPortal&quot;)</code></td>
+        <td><code>Q07/N01</code> · 昆仑琼华派·剑舞坪</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>2 胜</td>
+        <td class="sub">opened_dialog:第三章通关！双剑齐聚，四人登上冰火交织的琼华飞升·卷云台（M20/1）！</td>
+      </tr>
+<tr>
+        <td class="num">#31</td>
+        <td><code>interact()</code></td>
+        <td><code>M20/1</code> · 琼华飞升·卷云台决战</td>
+        <td>韩菱纱 <span class="sub">(0, 0, 35)</span></td>
+        <td>2 胜</td>
+        <td class="sub">confirmed_dialog:第三章通关！双剑齐聚，四人登上冰火交织的琼华飞升·卷云台（M20/1）！</td>
+      </tr>
+<tr>
+        <td class="num">#32</td>
+        <td><code>interact(target=&quot;XuanXiaoAndSuYao&quot;)</code></td>
+        <td><code>M20/1</code> · 琼华飞升·卷云台决战</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>2 胜</td>
+        <td class="sub">interaction_dispatched</td>
+      </tr>
+<tr>
+        <td class="num">#33</td>
+        <td><code>combat_action(action=&quot;skill&quot;)</code></td>
+        <td><code>M20/1</code> · 琼华飞升·卷云台决战</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>3 胜</td>
+        <td class="sub">combat_victory</td>
+      </tr>
+<tr>
+        <td class="num">#34</td>
+        <td><code>interact()</code></td>
+        <td><code>M20/1</code> · 琼华飞升·卷云台决战</td>
+        <td>韩菱纱 <span class="sub">(0, 0, -10)</span></td>
+        <td>3 胜</td>
+        <td class="sub">confirmed_dialog:云天河挽弓搭起射日猎弓与望舒剑，一箭射碎坠落的琼华冰峰！成功击败最终 Boss【玄霄】与【夙瑶】！请向</td>
+      </tr>
+<tr>
+        <td class="num">#35</td>
+        <td><code>interact(target=&quot;GrandEndingPortal&quot;)</code></td>
+        <td><code>M20/1</code> · 琼华飞升·卷云台决战</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>3 胜</td>
+        <td class="sub">opened_dialog:百年之后，青鸾峰木屋旁，清风吹拂望舒剑与墓碑，柳梦璃踏花归来，四位故人终得重逢——《仙剑奇侠传四》全四章大结</td>
+      </tr>
+<tr>
+        <td class="num">#36</td>
+        <td><code>interact()</code></td>
+        <td><code>M20/1</code> · 琼华飞升·卷云台决战</td>
+        <td>韩菱纱 <span class="sub">(0, 5, -65)</span></td>
+        <td>3 胜</td>
+        <td class="sub">confirmed_dialog:百年之后，青鸾峰木屋旁，清风吹拂望舒剑与墓碑，柳梦璃踏花归来，四位故人终得重逢——《仙剑奇侠传四》全四</td>
+      </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== TAB 3: 原版 CPK 全四章 24 关主线矩阵 ==================== -->
+  <section id="pane-cpk" class="tab-pane">
+    <h2>贰 · 原版零售 CPK 全四章 24 关主线验证矩阵<small><code>node test/run-real-cpk-bench.mjs --mode pure</code> · 覆盖 <code>mvar 10100 → 170000</code></small></h2>
+    <div class="intro-box">
+      <div style="font-size:13.8px;">
+        除了合成战役基准外，<strong>agent-pal4</strong> 直接挂载《仙剑奇侠传四》原版零售 <code>gamedata/*.cpk</code> 数据包（含全部 43 个 <code>.csb</code> 编译脚本模块与 266 个引擎系统调用），在虚拟时钟 <code>30x</code> 加速下从 <code>NewGame (10100)</code> 一路实机推进至卷云台终局决战与青鸾峰百年重逢大结局 <code>(170000)</code>，在 <strong>Pure</strong> 与 <strong>Normal</strong> 双模式下均实现 <strong>24 / 24 关 100% 零报错通关</strong>。
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">关卡</th>
+            <th>章节</th>
+            <th>原版场景</th>
+            <th>主线剧情里程碑</th>
+            <th>主线变量</th>
+            <th>核心验证的 OpenPAL4 引擎子系统</th>
+            <th>双模式状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+      <td class="num">Step 1</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>Q01/N01</code><div class="sub">青鸾峰·木屋清晨</div></td>
+      <td><strong>原版 NewGame 启动与小山猪剧情触发</strong></td>
+      <td><code>mvar=10100</code></td>
+      <td class="sub">GameScript.csb / Q01.csb 初始化与 GBK 对白解码</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 2</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>Q01/Q01</code><div class="sub">青鸾峰·山道</div></td>
+      <td><strong>清晨给爹娘牌位上香、小山猪闯入石沉溪洞</strong></td>
+      <td><code>mvar=10201</code></td>
+      <td class="sub">跨场景传送与过场镜头运镜自动推进</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 3</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>Q01/N01 → Q01</code><div class="sub">青鸾峰·取弓与古剑</div></td>
+      <td><strong>返屋拾取【长弓】与【不知名的剑】(MO002)</strong></td>
+      <td><code>mvar=10300</code></td>
+      <td class="sub">3D GOB 交互与背包物品系统同步</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 4</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>M01/1</code><div class="sub">石沉溪洞·迷宫入口</div></td>
+      <td><strong>开启洞口机关进入 type=2 迷宫，加载 8 只迷宫怪物</strong></td>
+      <td><code>mvar=10400</code></td>
+      <td class="sub">SceneMonsters 迷宫怪物组生成与 .nav 导航网格</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 5</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>M01/1</code><div class="sub">石沉溪洞·初遇菱纱</div></td>
+      <td><strong>触发 ev_M01_1_6，韩菱纱烟雨夺魂与非领队角色寻路</strong></td>
+      <td><code>mvar=10600</code></td>
+      <td class="sub">非领队角色 (slot!=leader) 自动寻路防死锁</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 6</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>M01/1</code><div class="sub">石沉溪洞·魁召二连战</div></td>
+      <td><strong>烤山猪结识韩菱纱、仙术教学、魁召 Boss 二连战获胜</strong></td>
+      <td><code>mvar=11100</code></td>
+      <td class="sub">StartCombat 战斗状态机与望舒剑寒气觉醒</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 7</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>M01/2 → M01/3</code><div class="sub">石沉溪洞·冰封墓室</div></td>
+      <td><strong>云天青夙玉合葬墓室崩塌、立下下山约定</strong></td>
+      <td><code>mvar=11400</code></td>
+      <td class="sub">连续场景切换 (M01/2 → M01/3) 与脚本模态等待</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 8</td>
+      <td><span class="tag">第一幕</span></td>
+      <td><code>Q01/Q01</code><div class="sub">重返青鸾峰</div></td>
+      <td><strong>走出崩塌石沉溪洞返回青鸾峰山道</strong></td>
+      <td><code>mvar=11400</code></td>
+      <td class="sub">第一幕迷宫闭环完成，零脚本错误</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 9</td>
+      <td><span class="tag">第二幕</span></td>
+      <td><code>Q01 → M02 → Q02</code><div class="sub">紫云架至太平村</div></td>
+      <td><strong>拜别云天青墓、穿越紫云架 (M02/1..3) 抵达太平村</strong></td>
+      <td><code>mvar=20300</code></td>
+      <td class="sub">跨世界加载 (Q01 → M02 → Q02) 与 LinkObj 触发</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 10</td>
+      <td><span class="tag">第二幕</span></td>
+      <td><code>M03/1Y → Q03/Q03S</code><div class="sub">巢湖夜战与寿阳城</div></td>
+      <td><strong>太平村钟馗剧变、巢湖夜战风邪兽、初遇慕容紫英抵寿阳</strong></td>
+      <td><code>mvar=21700</code></td>
+      <td class="sub">昼夜变体场景 (M03/1Y, Q03S) 与剧情 Boss 战</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 11</td>
+      <td><span class="tag">第二幕</span></td>
+      <td><code>Q03/Q03X → XN03Y</code><div class="sub">寿阳告示与柳府夜探</div></td>
+      <td><strong>揭海捕文书 (MO005)、夜闯柳府初遇柳梦璃</strong></td>
+      <td><code>mvar=22100</code></td>
+      <td class="sub">场景内多层室内外切换 (Q03S → Q03X → XN03Y)</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 12</td>
+      <td><span class="tag">第二幕</span></td>
+      <td><code>M04/1 → M05/1</code><div class="sub">女萝岩与八公山</div></td>
+      <td><strong>女萝岩击败槐妖长老、返回柳府议事并进入八公山</strong></td>
+      <td><code>mvar=30500</code></td>
+      <td class="sub">M04.csb 妖界剧情与队伍状态恢复</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 13</td>
+      <td><span class="tag">第二幕</span></td>
+      <td><code>M06/1A..2D..4</code><div class="sub">淮南王陵全机关解谜</div></td>
+      <td><strong>点亮多室油灯机关、击败淮南王夺取土灵珠并爬梯脱出</strong></td>
+      <td><code>mvar=31300</code></td>
+      <td class="sub">复杂多子场景状态保持 (M06/1A..2D..4) 与梯子传送</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 14</td>
+      <td><span class="tag">第二幕</span></td>
+      <td><code>Q03/XN03</code><div class="sub">柳梦璃正式入队</div></td>
+      <td><strong>重返寿阳柳府客房休憩、柳梦璃入队，第二幕圆满通关</strong></td>
+      <td><code>mvar=40100</code></td>
+      <td class="sub">PlayerRoster 三人入队同步与队形配置</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 15</td>
+      <td><span class="tag">第三幕</span></td>
+      <td><code>M07/1..9 → Q04</code><div class="sub">女萝岩地脉至陈州</div></td>
+      <td><strong>穿越女萝岩九层地脉迷宫 (M07/1..9) 抵达陈州城</strong></td>
+      <td><code>mvar=50200</code></td>
+      <td class="sub">M07 九层地脉连续传送门与机关门解谜</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 16</td>
+      <td><span class="tag">第三幕</span></td>
+      <td><code>M08/1..5 → Q05</code><div class="sub">千佛塔与播仙镇</div></td>
+      <td><strong>陈州弦歌台、夜探五层千佛塔 (M08/1..5)、琴姬悲歌抵播仙镇</strong></td>
+      <td><code>mvar=51600</code></td>
+      <td class="sub">M08 五层佛塔递进触发与 CN05C 特殊室内场景映射</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 17</td>
+      <td><span class="tag">第三幕</span></td>
+      <td><code>M09/1..3 → M10/1</code><div class="sub">太一仙径与须臾幻境</div></td>
+      <td><strong>攀登太一仙径 (M09/1..3) 抵昆仑琼华派，进入须臾幻境</strong></td>
+      <td><code>mvar=61001</code></td>
+      <td class="sub">昆仑山门剧情衔接与幻境试炼初始化</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 18</td>
+      <td><span class="tag">第三幕</span></td>
+      <td><code>M10/1..10 → Q06</code><div class="sub">酒仙财神试炼与紫英入队</div></td>
+      <td><strong>集齐 99 坛美酒破酒仙试炼、集九眼石破财神试炼、慕容紫英入队</strong></td>
+      <td><code>mvar=70200</code></td>
+      <td class="sub">AngelScript 2.2 double 双精度浮点指令集 (72..84) 执行</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 19</td>
+      <td><span class="tag">第四幕</span></td>
+      <td><code>M11 → Q07 → M20/1Y</code><div class="sub">御剑下山与禁地初见玄霄</div></td>
+      <td><strong>解锁御剑飞行、碗丘山与月牙村求援、夜探思返谷禁地见玄霄</strong></td>
+      <td><code>mvar=81100</code></td>
+      <td class="sub">WorldMap.csb 御剑飞行系统 (fly_to) 与禁地冰封剧情</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 20</td>
+      <td><span class="tag">第四幕</span></td>
+      <td><code>M12 → Q08 → Q09 → M13</code><div class="sub">清阳仙逝与即墨花灯</div></td>
+      <td><strong>醉花荫清阳真人仙逝、夏螟虫笼破狐仙、即墨花灯之约、受托三寒器</strong></td>
+      <td><code>mvar=100200</code></td>
+      <td class="sub">Q09 即墨夜景多 NPC 互动与 M20 禁地二次会面</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 21</td>
+      <td><span class="tag">第四幕</span></td>
+      <td><code>M14 → M03/Q10 → M20/1</code><div class="sub">三寒器齐聚与玄霄破冰</div></td>
+      <td><strong>炎帝神农洞取炙炎石、居巢国获水灵珠、土灵珠脱出、玄霄破冰决裂</strong></td>
+      <td><code>mvar=121100</code></td>
+      <td class="sub">use_item(&#39;EarthBall&#39;) 土灵珠迷宫脱出与破冰大剧情</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 22</td>
+      <td><span class="tag">第四幕</span></td>
+      <td><code>M15 → Q11 → Q12 → M17/5</code><div class="sub">鬼界重逢、不周山与封神陵</div></td>
+      <td><strong>无常殿与转轮镜台见云天青、不周山战衔烛之龙、封神陵取后羿射日弓</strong></td>
+      <td><code>mvar=140100</code></td>
+      <td class="sub">鬼界/不周山/封神陵超长跨界剧情链与神弓获取</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 23</td>
+      <td><span class="tag">第四幕</span></td>
+      <td><code>Q06J → Q14 → M18/1</code><div class="sub">幻瞑界真相与梦璃诀别</div></td>
+      <td><strong>旋梦入幻瞑界、里幻瞑宫揭十九年前真相、柳梦璃继位少主挥泪诀别</strong></td>
+      <td><code>mvar=160400</code></td>
+      <td class="sub">琼华妖界大战多场连续脚本战斗与队伍成员离队</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+<tr>
+      <td class="num">Step 24</td>
+      <td><span class="tag">第四幕</span></td>
+      <td><code>Q01 → M19/1..2</code><div class="sub">卷云台终局决战与百年重逢</div></td>
+      <td><strong>夜归青鸾峰祭拜父母、闯焚毁琼华派、卷云台战玄霄夙瑶、挽弓射日大结局</strong></td>
+      <td><code>mvar=170000</code></td>
+      <td class="sub">终局双 Boss 决战、game_cleared=true 判定与青鸾峰结局闭环</td>
+      <td><span class="vbadge ok">PURE ✓</span> <span class="vbadge ok">NORMAL ✓</span></td>
+    </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== TAB 4: 引擎架构与重放核验 ==================== -->
+  <section id="pane-verify" class="tab-pane">
+    <h2>叁 · OpenPAL4 无头引擎架构与确定性重放核验<small>成绩不靠信任，靠 C++20 子进程逐步重放</small></h2>
+    <div class="intro-box">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px;">
+        为什么需要确定性重放核验 (<code>bench/verify.mjs</code>)？
+      </div>
+      <div style="font-size:13.5px;color:var(--ink-soft);">
+        大模型评测容易受到客户端日志篡改或环境不一致的影响。在 <code>agent-pal4</code> 中，每一局运行都会将完整的工具调用序列写入 <code>episode.jsonl</code>。运行 <code>node bench/verify.mjs</code> 时，核验器会启动一个全新的 <code>agent-pal4-host</code> C++20 子进程（固定伪随机种子 <code>0xC0DEC0DE</code>），按原顺序、原参数重新执行每一步工具调用，并逐步比对：
+      </div>
+      <div class="pillars">
+        <div class="pillar">
+          <strong>1. 逐步空间与状态快照比对</strong>
+          <span>核对每一步调用后的 <code>world</code>、<code>scene</code>、领队 3D 坐标 <code>leader.position</code>、战斗胜场 <code>combat.victories</code> 与 <code>game_cleared</code>。</span>
+        </div>
+        <div class="pillar">
+          <strong>2. AngelScript 2.2 确定性虚拟机</strong>
+          <span><code>CsbExecution</code> 完整支持 32-bit 整型/浮点与 64-bit <code>double</code> 双精度指令集 (<code>BC_ADDd..BC_F2D</code>)，保证复杂机关（如须臾幻境 99 酒试炼）重放零偏差。</span>
+        </div>
+        <div class="pillar">
+          <strong>3. SHA-256 三重证据链绑定</strong>
+          <span><code>verify.json</code> 记录 <code>result.json + episode.jsonl + client.jsonl</code> 的联合 SHA-256 摘要；任何事后修改都会使 <code>board.mjs</code> 立即撤销「已核验 ✓」徽章。</span>
+        </div>
+        <div class="pillar">
+          <strong>4. 零 API 成本秒级复现</strong>
+          <span>重放核验完全在本地 C++20 无头引擎中执行，无需调用任何外部 LLM API，4 局历史轨迹全部核验仅需不到 1 秒。</span>
+        </div>
+      </div>
+    </div>
+
+    <h2>🛠️ 常用评测与核验命令速查</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>命令</th>
+            <th>用途说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>npm test</code></td>
+            <td>运行 19 项无头引擎契约测试 + 原版零售 CPK 全四章 24 关主线基准</td>
+          </tr>
+          <tr>
+            <td><code>node test/run-real-cpk-bench.mjs --mode pure</code></td>
+            <td>以 <strong>Pure 纯净模式</strong>运行原版 CPK 全四章 24 关主线通关验证 (<code>10100 → 170000</code>)</td>
+          </tr>
+          <tr>
+            <td><code>node bench/run-argon.mjs --mode pure</code></td>
+            <td>启动大模型智能体在 <strong>Pure 纯净模式</strong>下自主探索通关全四章战役，结果写入 <code>bench/out/</code></td>
+          </tr>
+          <tr>
+            <td><code>node bench/verify.mjs</code></td>
+            <td>对 <code>bench/out/</code> 下所有运行记录执行 C++20 子进程确定性重放核验并生成 <code>verify.json</code></td>
+          </tr>
+          <tr>
+            <td><code>node bench/board.mjs</code></td>
+            <td>生成自包含静态排行榜页面 <code>bench/out/board.html</code> 与 <code>web/board.html</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    agent-pal4 · Built on <a href="https://github.com/jianmliu/OpenPAL4" target="_blank" rel="noopener">OpenPAL4</a> C++20 Portable Runtime &amp; Headless GLES3 Shim ·
+    <a href="https://github.com/jianmliu/agent-pal4" target="_blank" rel="noopener">GitHub Repository</a>
+  </footer>
+</main>
+<script>
+  // URL hash 与页签双向同步 (#stats, #campaigns, #cpk, #verify)
+  (function () {
+    const map = {
+      "#stats": "tab-stats",
+      "#campaigns": "tab-campaigns",
+      "#cpk": "tab-cpk",
+      "#verify": "tab-verify",
+    };
+    function syncFromHash() {
+      const id = map[location.hash];
+      const el = id && document.getElementById(id);
+      if (el) el.checked = true;
+    }
+    window.addEventListener("hashchange", syncFromHash);
+    syncFromHash();
+    for (const [hash, id] of Object.entries(map)) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("change", () => {
+          if (el.checked) history.replaceState(null, "", hash);
+        });
+      }
+    }
+  })();
+</script>
+</body>
+</html>

@@ -1,10 +1,31 @@
 # agent-pal4 — Headless & WebAssembly Agent Benchmark for Chinese Paladin 4 (仙剑奇侠传四)
 
-`agent-pal4` is an autonomous AI agent benchmark and headless/WebAssembly runtime host for **Chinese Paladin 4 (仙剑奇侠传四)**, built on top of the C++20 portable engine in [`OpenPAL4`](https://github.com/jianmliu/OpenPAL4) (`pal4::portable::ChapterHost`).
+`agent-pal4` is an autonomous AI agent benchmark, deterministic replay verifier, and headless/WebAssembly runtime host for **Chinese Paladin 4 (仙剑奇侠传四)**, built on top of the C++20 portable engine in [`OpenPAL4`](https://github.com/jianmliu/OpenPAL4) (`pal4::portable::ChapterHost`).
 
-It exposes a deterministic JSON-RPC / MCP-compatible tool interface (`observe`, `move_to`, `interact`, `switch_leader`, `combat_action`, `step`, `reset`) over both:
-1. **Native Headless C++20 Host (`agent-pal4-host`)** with a zero-GPU GLES3 instrumentation backend (`gles3_headless_stub.cpp`).
+It exposes a deterministic JSON-RPC / MCP-compatible tool interface (`observe`, `move_to`/`walk_to`, `interact`, `switch_leader`, `combat_action`, `fly_to`, `use_item`, `rest`, `wait`, `step`, `reset`) over both:
+1. **Native Headless C++20 Host (`agent-pal4-host`)** with a zero-GPU GLES3 instrumentation backend (`headless_gles3.cpp`) and `--mode pure|normal` evaluation support.
 2. **Emscripten WebAssembly + WebGL2 Browser Host (`agent_pal4_wasm`)** via `ccall` (`agent_pal4_init`, `agent_pal4_rpc`).
+
+---
+
+## 🏆 Leaderboard (问情论剑 · 自主智能体排行榜)
+
+Static HTML Leaderboard: [`bench/out/board.html`](bench/out/board.html) (also mirrored at [`web/board.html`](web/board.html)).
+
+| Rank | Model | Mode | Campaign Scope | Progress | Tool Calls | Bosses / Max Lv | Tokens | Duration | Replay Verification |
+| :-: | :--- | :-: | :--- | :-: | :-: | :-: | :-: | :-: | :-: |
+| 🥇 1 | `agy-cli:gemini-4-argon-medium` ([`argon-20261105T032438`](bench/out/argon-20261105T032438/result.json)) | **`pure`** | **Full 4-Chapter Campaign (Act I–IV)** | **100%** | **36** | 3/3 · Lv.50 | 89.3k | 159.6s | `已核验 ✓` (`724fad874ef1`) |
+| 🥈 2 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T204552`](bench/out/argon-20261103T204552/result.json)) | `normal` | **Full 4-Chapter Campaign (Act I–IV)** | **100%** | **48** | 3/3 · Lv.50 | 58.9k | 131.1s | `已核验 ✓` (`7903cba5ebc1`) |
+| 🥉 3 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T201924`](bench/out/argon-20261103T201924/result.json)) | `normal` | Chapter 1 Benchmark (Shichenxi Cave) | 50% | 22 | 1/1 · Lv.1 | 27.2k | 51.9s | `已核验 ✓` (`5680d5c70bad`) |
+| 4 | `agy-cli:gemini-4-argon-medium` ([`argon-20261103T194927`](bench/out/argon-20261103T194927/result.json)) | `normal` | Opening Trial Benchmark (Qingluan Peak) | 25% | 9 | 0/0 · Lv.1 | 35.0k | 74.5s | `已核验 ✓` (`ef4b25ab482c`) |
+
+### Retail `.cpk` Full 4-Chapter Campaign Verification (`mvar 10100 -> 170000`)
+
+| Suite | Mode | Stages Passed | `.csb` Modules | Engine Syscalls | Script Errors | Unhandled Calls | Status |
+| :--- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| [`test/run-real-cpk-bench.mjs`](test/run-real-cpk-bench.mjs) | **`pure`** | **24 / 24 (100%)** | 43 | 266 | 0 | 0 | `PASS ✓` |
+| [`test/run-real-cpk-bench.mjs`](test/run-real-cpk-bench.mjs) | `normal` | **24 / 24 (100%)** | 43 | 266 | 0 | 0 | `PASS ✓` |
+| [`test/run-headless-bench.mjs`](test/run-headless-bench.mjs) | `pure` & `normal` | **19 / 19 (100%)** | Synthetic | 266 | 0 | 0 | `PASS ✓` |
 
 ---
 
@@ -18,7 +39,8 @@ It exposes a deterministic JSON-RPC / MCP-compatible tool interface (`observe`, 
                                   v
 +-------------------------------------------------------------------+
 |  agent-pal4-host (src/agent_pal4_host.cpp)                        |
-|  - 3D Navigation & Camera-Relative Analog Input (MoveTo)          |
+|  - Pure Mode Sanitization (--mode pure) & Anti-Cheat Enforcement  |
+|  - 3D Navigation & Camera-Relative Analog Input (MoveTo / A*)     |
 |  - NPC / GOB / EVF Volume Interaction & Dialog Advancement        |
 |  - Turn-Based Combat Loop (CombatNumericDamageAction + Formulas)  |
 +---------------------------------+---------------------------------+
@@ -26,7 +48,7 @@ It exposes a deterministic JSON-RPC / MCP-compatible tool interface (`observe`, 
                                   v
 +-------------------------------------------------------------------+
 |  OpenPAL4 C++20 Portable Runtime (pal4::portable::ChapterHost)    |
-|  - AngelScript VM (ScriptStack + GameServices 266-API Catalog)    |
+|  - AngelScript 2.2 VM (CsbExecution + 64-bit double opcodes 72..84)|
 |  - SceneCollision (Floor NavMesh + 3D Wall & Event Volumes)       |
 |  - PlayerRoster, PlayerEquipment, InventoryServices, ArenaServices|
 +-------------------------------------------------------------------+
@@ -50,39 +72,37 @@ cmake --build build -j4 --target agent-pal4-host
 
 #### A. Real `.cpk` Full 4-Chapter Playthrough Benchmark (`24/24` Checks, `mvar 10100 -> 170000`)
 
-Runs the entire original *Chinese Paladin 4 (仙剑奇侠传四)* retail `.cpk` campaign from **NewGame (`Q01/N01`, `mvar=10100`)** all the way to the **Grand Ending (`M19/2`, `mvar=170000`, `game_cleared=true`)** with **zero script errors** and **zero unhandled engine calls (`unhandled_calls=0`)**:
+Runs the entire original *Chinese Paladin 4 (仙剑奇侠传四)* retail `.cpk` campaign in **Pure Mode** (`--mode pure`) or **Normal Mode** (`--mode normal`) from **NewGame (`Q01/N01`, `mvar=10100`)** all the way to the **Grand Ending (`M19/2`, `mvar=170000`, `game_cleared=true`)** with **zero script errors** and **zero unhandled engine calls**:
 
 ```bash
-node test/run-real-cpk-bench.mjs
+node test/run-real-cpk-bench.mjs --mode pure
+node test/run-real-cpk-bench.mjs --mode normal
 ```
 
 - **Act 1 (`10100 -> 11400`)**: Qingluan Peak (`Q01`), Shichen Brook Cave (`M01/1..3`), meeting Han Lingsha, defeating Kuizhao (`魁召`), awakening Wangshu Sword.
 - **Act 2 (`11400 -> 40100`)**: Ziyun Frame (`M02`), Taiping Village (`Q02`), Chaohu Lake (`M03`), Shouyang City (`Q03`), Nvluo Rock (`M04`), Bagong Mountain (`M05`), King of Huainan Tomb (`M06/1A..2D..4`), recruiting Liu Mengli.
-- **Act 3 (`40100 -> 70200`)**: Nvluo Leyline (`M07/1..9`), Chenzhou (`Q04`), Thousand Buddha Pagoda (`M08/1..5`), Boxian Town (`Q05`), Taiyi Immortal Path (`M09/1..3`), Qionghua Sect (`Q06`), Xuyu Illusion (`M10/1`), recruiting Murong Ziying.
+- **Act 3 (`40100 -> 70200`)**: Nvluo Leyline (`M07/1..9`), Chenzhou (`Q04`), Thousand Buddha Pagoda (`M08/1..5`), Boxian Town (`Q05`), Taiyi Immortal Path (`M09/1..3`), Qionghua Sect (`Q06`), Xuyu Illusion 99-Wine & Nine-Eye Stones Trials (`M10/1..10`), recruiting Murong Ziying.
 - **Act 4 (`70200 -> 170000` Grand Ending)**: Wanqiu Mountain (`M11`), Yueya Village (`Q07`), Sifan Valley & Forbidden Ground (`M20`), Zuihuayin (`M12`), Jimo (`Q08`), Yinshan (`Q09`), Fox Demon Cave (`M13`), Shennong Cave (`M14/1..3`), Juchao (`Q10`), Exile Path (`M15`), Ghost Realm (`Q11`), Buzhou Mountain (`M16`), Fengshen Mausoleum (`Q13` & `M17/1..5`), Huanming Realm (`Q14` & `M18/1`), Burning Qionghua & Juanyun Platform Final Boss Battle against Xuanxiao & Suyao (`M19/1..2`, `mvar=170000`).
 
 #### B. 19-Step Synthetic Full-Campaign Headless Benchmark
 
 ```bash
-npm test
+npm run test:headless
 # or: node test/run-headless-bench.mjs
 ```
 
-Verifies all 19 engine milestones across the synthetic 4-chapter campaign (including Normal/Pure mode de-biasing, `.evf` 3D portal centroids, and in-memory checkpoint save/restore):
-- **Chapter 1 (`Q01/N01` -> `M01/1` -> `M01/2`)**: 3D wall collision (`SceneCollision`), NPC pathfinding & dialog (`HanLingsha`), chest GOB loot (`射日猎弓`), leader switch (`giPlayerInTeam` / `SetLeader`), EVF portal transition (`giArenaLoad`), Boss `魁召` combat (`CombatNumericDamageAction` + `BattleHealthState`), and `望舒剑` equipment (`giAddPlayerEquip`).
-- **Chapter 2 (`Q02/N01` -> `M04/1`)**: Recruiting `柳梦璃` (`giPlayerInTeam(2, true)`), favor (`giAddPlayerFavor`), money (`giAddMoney`), rest (`giPlayerTakeARest`), skills (`giPlayerAddSkill`), and defeating Boss `槐妖长老` for `土灵珠` (`giSetFullRage`, `giSetPlayerLevel`).
-- **Chapter 3 (`Q07/N01`)**: Recruiting `慕容紫英` (all 4 heroes assembled) and forging `羲和剑` (`giPayMoney`, `giCheckPackProperty`).
-- **Chapter 4 (`M20/1`)**: Final Boss battle against `玄霄` & `夙瑶` at Juanyun Platform (`giStartCombat("M20")`, `giGetRandnum`) and triggering the Grand Finale (`quest_stage == 1000`, `game_cleared == true`).
-
-### 3. Run Autonomous LLM Agent (`argon`) Playthrough
+### 3. Run Autonomous LLM Agent (`argon`), Verify Replays & Build Leaderboard
 
 ```bash
-node bench/run-argon.mjs
-```
+# 1. Run autonomous LLM agent playthrough in Pure Mode
+npm run bench:run
+# or: node bench/run-argon.mjs --mode pure
 
-#### Latest `agy-cli:gemini-4-argon-medium` Benchmark Result
-- **Run ID**: [`bench/out/argon-20261103T204552/result.json`](bench/out/argon-20261103T204552/result.json)
-- **Model**: `agy-cli:gemini-4-argon-medium`
-- **Status**: `gameCleared: true` (`questStage: 1000`, 3/3 Bosses defeated, all 4 party members Lv.50)
-- **Tool Calls**: `48` steps across 7 scenes (`Q01/N01` -> `M01/1` -> `M01/2` -> `Q02/N01` -> `M04/1` -> `Q07/N01` -> `M20/1`)
-- **Duration**: `131.1s` (`2m 11s`)
+# 2. Deterministically replay & verify all runs in bench/out/ (writes verify.json)
+npm run bench:verify
+# or: node bench/verify.mjs
+
+# 3. Generate self-contained static HTML leaderboard (bench/out/board.html & web/board.html)
+npm run bench:board
+# or: node bench/board.mjs
+```

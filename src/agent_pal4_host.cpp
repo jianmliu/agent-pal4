@@ -1236,6 +1236,56 @@ public:
         MoveResult result{};
         const float dt = 1.0f / 30.0f;
         int stalled_frames = 0;
+        if (!using_real_cpk_) {
+            for (int step = 0; step < std::max(1, max_steps); ++step) {
+                AutoConfigureDialog();
+                if (h.dialog && h.dialog->View().visible) {
+                    break;
+                }
+                const auto leader = h.players.Leader();
+                const auto pos = h.players.Slots()[leader].position;
+                const float dx = target_x - pos[0];
+                const float dz = target_z - pos[2];
+                const float dist = std::sqrt(dx * dx + dz * dz);
+                if (dist <= 4.5f) {
+                    result.reached = true;
+                    break;
+                }
+                const float ux = dx / dist;
+                const float uz = dz / dist;
+                const auto pose = h.game_camera->Pose();
+                float rx = pose.right[0], rz = pose.right[2];
+                float fx = pose.forward[0], fz = pose.forward[2];
+                const float r_len = std::hypot(rx, rz);
+                const float f_len = std::hypot(fx, fz);
+                if (r_len > 1e-4f) { rx /= r_len; rz /= r_len; }
+                if (f_len > 1e-4f) { fx /= f_len; fz /= f_len; }
+                h.input_x = std::clamp(-(ux * rx + uz * rz), -1.0f, 1.0f);
+                h.input_y = std::clamp(+(ux * fx + uz * fz), -1.0f, 1.0f);
+                AdvanceHostFrame(dt);
+                result.steps_taken = step + 1;
+
+                const auto after = h.players.Slots()[leader].position;
+                const float moved = std::hypot(after[0] - pos[0], after[2] - pos[2]);
+                if (step > 18 && moved < 0.05f) {
+                    if (++stalled_frames >= 6) {
+                        result.blocked = true;
+                        break;
+                    }
+                } else {
+                    stalled_frames = 0;
+                }
+            }
+            h.input_x = 0.f;
+            h.input_y = 0.f;
+            const auto leader = h.players.Leader();
+            result.final_position = h.players.Slots()[leader].position;
+            result.distance_remaining = std::hypot(
+                target_x - result.final_position[0],
+                target_z - result.final_position[2]);
+            if (result.distance_remaining <= 4.5f) result.reached = true;
+            return result;
+        }
         const auto start_pos = h.players.Slots()[h.players.Leader()].position;
         std::optional<Point3> matched_ev_point;
         if (h.scene_events && h.arena) {
