@@ -99,10 +99,14 @@ async function main() {
     bySceneLeader: {},
     byScene: {},
     byWorld: {},
+    substepsByStep: {},
+    substepsByTransition: {},
   };
 
   const renderedPosKeys = new Map();
+  const extraBmpJobs = [];
   let frameCounter = 0;
+  let substepCounter = 0;
 
   async function captureIfNeeded(st) {
     if (!st || !st.world) return;
@@ -140,16 +144,65 @@ async function main() {
 
   try {
     await host.send("set_time_scale", { scale: 30.0 });
-    const init = await host.send("observe");
-    await captureIfNeeded(init);
+    let prevSt = await host.send("observe");
+    await captureIfNeeded(prevSt);
 
     for (let i = 0; i < log.calls.length; i++) {
       const c = log.calls[i];
+      const stepNum = c.step || i + 1;
+
+      if (
+        (c.tool === "interact" && c.args?.target) ||
+        c.tool === "move_to" ||
+        c.tool === "walk_to"
+      ) {
+        const subPrefix = path.join(tmpDir, `sub_${stepNum}`);
+        const subReq = {
+          target: String(c.args?.target || ""),
+          prefix: subPrefix,
+          width: 512,
+          height: 288,
+          max_substeps: 3,
+        };
+        if (typeof c.args?.x === "number") {
+          subReq.x = c.args.x;
+          subReq.y = Number(c.args.y || 0);
+          subReq.z = Number(c.args.z || 0);
+        }
+        const subRes = await host.send("render_substeps", subReq);
+        if (subRes?.ok && Array.isArray(subRes.substeps) && subRes.substeps.length > 0) {
+          const slug = `${subRes.world}_${subRes.scene}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+          const stepSubs = [];
+          for (let sIdx = 0; sIdx < subRes.substeps.length; sIdx++) {
+            const sub = subRes.substeps[sIdx];
+            substepCounter++;
+            const subFile = `s_${String(stepNum).padStart(3, "0")}_${sIdx + 1}_${slug}.jpg`;
+            extraBmpJobs.push({ bmpPath: sub.path, fileName: subFile });
+            stepSubs.push({
+              w: subRes.world,
+              sc: subRes.scene,
+              p: (sub.p || [0, 0, 0]).map((v) => Math.round(Number(v) * 10) / 10),
+              yaw: Math.round(Number(sub.yaw || 0)),
+              img: subFile,
+              target: String(c.args?.target || ""),
+            });
+          }
+          manifest.substepsByStep[String(stepNum)] = stepSubs;
+          if (prevSt?.world && c.args?.target) {
+            const transKey = `${prevSt.world}/${prevSt.scene}->${c.args.target}`;
+            if (!manifest.substepsByTransition[transKey]) {
+              manifest.substepsByTransition[transKey] = stepSubs;
+            }
+          }
+        }
+      }
+
       const st = await host.send(c.tool, c.args || {});
       await captureIfNeeded(st);
+      prevSt = st;
       if ((i + 1) % 25 === 0 || i === log.calls.length - 1) {
         console.log(
-          `[render-frames] Step ${i + 1}/${log.calls.length} (${st.world}/${st.scene}) — ${frameCounter} unique 3D frames rendered`,
+          `[render-frames] Step ${i + 1}/${log.calls.length} (${st.world}/${st.scene}) — ${frameCounter} key frames + ${substepCounter} sub-step frames rendered`,
         );
       }
     }
@@ -162,6 +215,9 @@ async function main() {
   for (let i = 1; i <= frameCounter; i++) {
     const info = renderedPosKeys.get(`__bmp_${i}`);
     if (info) jobs.push(info);
+  }
+  for (const job of extraBmpJobs) {
+    jobs.push(job);
   }
 
   const pyScript = `

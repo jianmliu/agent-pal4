@@ -718,6 +718,56 @@ public:
         return transcript;
     }
 
+    std::optional<Point3> ResolveTargetPosition(std::string_view target, bool* out_is_touch = nullptr) const {
+        const auto& h = *host_;
+        if (out_is_touch) *out_is_touch = false;
+        if (target.empty()) return std::nullopt;
+        std::optional<Point3> target_pos;
+        if (h.scene_npcs) {
+            const auto states = h.scene_npcs->States();
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                const bool match_script = !pure_mode_ && h.scene_npcs->InteractionScript(i) == target;
+                if (states[i].name == target || match_script) {
+                    target_pos = states[i].position;
+                    break;
+                }
+            }
+        }
+        if (!target_pos && h.scene_objects && h.arena) {
+            const auto states = h.scene_objects->States();
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                const bool match_script = !pure_mode_ && i < h.arena->catalog.gobs.size() && h.arena->catalog.gobs[i].script == target;
+                if (match_script ||
+                    (states[i].name == target &&
+                     (h.scene_objects->InteractionEnabled(i) ||
+                      (i < h.arena->catalog.gobs.size() && !h.arena->catalog.gobs[i].script.empty())))) {
+                    target_pos = h.arena->catalog.gobs[i].position;
+                    break;
+                }
+            }
+            if (!target_pos) {
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    if (states[i].name == target) {
+                        target_pos = h.arena->catalog.gobs[i].position;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!target_pos && h.scene_events && h.arena) {
+            const auto states = h.scene_events->States();
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                if (states[i].name == target ||
+                    (!pure_mode_ && i < h.arena->catalog.events.size() && h.arena->catalog.events[i].script == target)) {
+                    target_pos = EventTriggerPoint(i);
+                    if (out_is_touch) *out_is_touch = (states[i].type == 1);
+                    break;
+                }
+            }
+        }
+        return target_pos;
+    }
+
     std::string Interact(std::string_view target = {}) {
         auto& h = *host_;
         AutoConfigureDialog();
@@ -752,49 +802,7 @@ public:
         const std::string before_s = h.arena ? h.arena->description.scene : "";
         bool is_touch_event = false;
         if (!target.empty()) {
-            std::optional<Point3> target_pos;
-            if (h.scene_npcs) {
-                const auto states = h.scene_npcs->States();
-                for (std::size_t i = 0; i < states.size(); ++i) {
-                    const bool match_script = !pure_mode_ && h.scene_npcs->InteractionScript(i) == target;
-                    if (states[i].name == target || match_script) {
-                        target_pos = states[i].position;
-                        break;
-                    }
-                }
-            }
-            if (!target_pos && h.scene_objects && h.arena) {
-                const auto states = h.scene_objects->States();
-                for (std::size_t i = 0; i < states.size(); ++i) {
-                    const bool match_script = !pure_mode_ && i < h.arena->catalog.gobs.size() && h.arena->catalog.gobs[i].script == target;
-                    if (match_script ||
-                        (states[i].name == target &&
-                         (h.scene_objects->InteractionEnabled(i) ||
-                          (i < h.arena->catalog.gobs.size() && !h.arena->catalog.gobs[i].script.empty())))) {
-                        target_pos = h.arena->catalog.gobs[i].position;
-                        break;
-                    }
-                }
-                if (!target_pos) {
-                    for (std::size_t i = 0; i < states.size(); ++i) {
-                        if (states[i].name == target) {
-                            target_pos = h.arena->catalog.gobs[i].position;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (!target_pos && h.scene_events && h.arena) {
-                const auto states = h.scene_events->States();
-                for (std::size_t i = 0; i < states.size(); ++i) {
-                    if (states[i].name == target ||
-                        (!pure_mode_ && i < h.arena->catalog.events.size() && h.arena->catalog.events[i].script == target)) {
-                        target_pos = EventTriggerPoint(i);
-                        is_touch_event = (states[i].type == 1);
-                        break;
-                    }
-                }
-            }
+            const auto target_pos = ResolveTargetPosition(target, &is_touch_event);
             if (target_pos) {
                 const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
                 const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
@@ -2523,11 +2531,18 @@ public:
         int height = 360,
         std::optional<float> yaw_override = std::nullopt,
         float pitch_deg = 22.0f,
-        float req_dist = 0.0f) {
+        float req_dist = 0.0f,
+        std::string_view anim_clip_override = {},
+        float anim_sec = 0.0f) {
         auto& h = *host_;
         if (!h.arena || !h.game_camera || !h.players.Prepared()) return false;
         width = std::clamp(width, 64, 1024);
         height = std::clamp(height, 64, 1024);
+
+        const auto saved_pose = h.game_camera->Pose(0);
+        const auto restore_cam = [&]() {
+            h.game_camera->SetParameters(0, saved_pose.target, saved_pose.angles, saved_pose.requested_distance);
+        };
 
         const auto leader_idx = h.players.Leader();
         const auto& leader = h.players.Slots()[leader_idx];
@@ -2545,28 +2560,17 @@ public:
         const bool is_small_indoor = (std::max(span_x, span_z) < 600.0f);
         const float center_x = 0.5f * (h.arena->world.minimum[0] + h.arena->world.maximum[0]);
         const float center_z = 0.5f * (h.arena->world.minimum[2] + h.arena->world.maximum[2]);
+        const std::string cur_scene_key = h.arena->description.world + "/" + h.arena->description.scene;
 
-        float base_yaw = yaw_override.value_or(leader.rotation[1] + 200.0f);
-        if (!yaw_override) {
-            if (is_small_indoor) {
-                const float dx = center_x - pos[0];
-                const float dz = center_z - pos[2];
-                if (std::hypot(dx, dz) > 15.0f) {
-                    // Place camera toward room center looking at player
-                    base_yaw = std::atan2(dx, dz) * 57.2957795f + 180.0f;
-                }
-            } else if (h.scene_npcs) {
-                float best_d = 260.0f;
-                for (const auto& npc : h.scene_npcs->States()) {
-                    if (!npc.active) continue;
-                    const float dx = npc.position[0] - pos[0];
-                    const float dz = npc.position[2] - pos[2];
-                    const float d = std::hypot(dx, dz);
-                    if (d > 2.0f && d < best_d) {
-                        best_d = d;
-                        base_yaw = std::atan2(-dx, -dz) * 57.2957795f + 22.0f;
-                    }
-                }
+        // Keep world-space camera azimuth consistent within the same scene so the camera translates smoothly
+        // alongside the character instead of spinning wildly whenever the character turns.
+        float base_yaw = yaw_override.value_or(
+            (last_render_scene_ == cur_scene_key) ? last_render_yaw_ : 205.0f);
+        if (!yaw_override && is_small_indoor) {
+            const float dx = center_x - pos[0];
+            const float dz = center_z - pos[2];
+            if (std::hypot(dx, dz) > 15.0f) {
+                base_yaw = std::atan2(dx, dz) * 57.2957795f + 180.0f;
             }
         }
 
@@ -2645,6 +2649,8 @@ public:
                 }
             }
         }
+        last_render_scene_ = cur_scene_key;
+        last_render_yaw_ = chosen_yaw;
         h.game_camera->SetParameters(0, target, {chosen_yaw, pitch_deg, 0.0f}, chosen_dist);
 
         const float aspect = static_cast<float>(width) / static_cast<float>(height);
@@ -2711,6 +2717,17 @@ public:
 
         if (leader.actor && leader.visible && !h.instance_scene.vertices.empty()) {
             try {
+                if (!anim_clip_override.empty()) {
+                    int clip_idx = 0;
+                    for (std::size_t ci = 0; ci < leader.actor->clips.size(); ++ci) {
+                        if (leader.actor->clips[ci].name == anim_clip_override) {
+                            clip_idx = static_cast<int>(ci);
+                            break;
+                        }
+                    }
+                    h.player_render_clip.Sample(*leader.actor, clip_idx, anim_sec, h.instance_scene.vertices);
+                    h.instance_renderer.UpdateVertices(h.instance_scene.vertices);
+                }
                 const auto model = InstanceMatrix(leader.position, leader.rotation);
                 h.instance_renderer.DrawScene(h.instance_scene, view_proj, model);
             } catch (...) {}
@@ -2719,6 +2736,7 @@ public:
         std::vector<std::uint8_t> rgba(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 0);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
         AgentPal4SetRasterizeEnabled(false);
+        restore_cam();
 
         std::filesystem::path p(out_path);
         if (p.has_parent_path()) {
@@ -2760,6 +2778,160 @@ public:
             out.write(reinterpret_cast<const char*>(row.data()), row_stride);
         }
         return static_cast<bool>(out);
+    }
+
+    std::string RenderSubstepsToTarget(
+        std::string_view target,
+        std::optional<Point3> explicit_goal,
+        const std::string& out_prefix,
+        int width = 512,
+        int height = 288,
+        int max_substeps = 3) {
+        auto& h = *host_;
+        if (!h.arena || !h.game_camera || !h.players.Prepared() || combat_.active ||
+            (h.dialog && h.dialog->View().visible)) {
+            return "{\"ok\":true,\"substeps\":[]}";
+        }
+        const auto goal_opt = explicit_goal ? explicit_goal : ResolveTargetPosition(target);
+        if (!goal_opt) {
+            return "{\"ok\":true,\"substeps\":[]}";
+        }
+        const auto leader_idx = h.players.Leader();
+        auto& leader_slot = const_cast<PlayerSlot&>(h.players.Slots()[leader_idx]);
+        const Point3 start_pos = leader_slot.position;
+        const Point3 saved_rot = leader_slot.rotation;
+        const Point3 goal_pos = *goal_opt;
+
+        const float direct_dist = std::hypot(goal_pos[0] - start_pos[0], goal_pos[2] - start_pos[2]);
+        if (direct_dist < 18.0f) {
+            return "{\"ok\":true,\"substeps\":[]}";
+        }
+
+        const auto waypoints = ComputeNavMeshWaypoints(start_pos, goal_pos);
+        std::vector<Point3> poly;
+        poly.reserve(waypoints.size() + 1);
+        poly.push_back(start_pos);
+        for (const auto& wp : waypoints) {
+            if (std::hypot(wp[0] - poly.back()[0], wp[2] - poly.back()[2]) > 2.0f) {
+                poly.push_back(wp);
+            }
+        }
+        if (poly.size() < 2) {
+            poly.push_back(goal_pos);
+        }
+
+        std::vector<float> cum_len(poly.size(), 0.0f);
+        for (std::size_t i = 1; i < poly.size(); ++i) {
+            cum_len[i] = cum_len[i - 1] + std::hypot(poly[i][0] - poly[i - 1][0], poly[i][2] - poly[i - 1][2]);
+        }
+        const float total_len = cum_len.back();
+        if (total_len < 18.0f) {
+            return "{\"ok\":true,\"substeps\":[]}";
+        }
+
+        int K = 1;
+        if (total_len > 140.0f) K = 3;
+        else if (total_len > 48.0f) K = 2;
+        K = std::min(K, std::clamp(max_substeps, 1, 5));
+
+        const float eff_len = std::max(total_len * 0.55f, total_len - 10.0f);
+
+        auto snap_floor_y = [&](float x, float y_est, float z) -> float {
+            const auto& floor = h.arena->collision.floor;
+            if (floor.empty()) return y_est;
+            float best_y = y_est;
+            float best_score = 1e30f;
+            for (const auto& tri : floor) {
+                const auto& v0 = tri.points[0];
+                const auto& v1 = tri.points[1];
+                const auto& v2 = tri.points[2];
+                // Check 2D barycentric containment in XZ plane
+                const float denom = (v1[2] - v2[2]) * (v0[0] - v2[0]) + (v2[0] - v1[0]) * (v0[2] - v2[2]);
+                if (std::abs(denom) > 1e-4f) {
+                    const float a = ((v1[2] - v2[2]) * (x - v2[0]) + (v2[0] - v1[0]) * (z - v2[2])) / denom;
+                    const float b = ((v2[2] - v0[2]) * (x - v2[0]) + (v0[0] - v2[0]) * (z - v2[2])) / denom;
+                    const float c = 1.0f - a - b;
+                    if (a >= -0.05f && b >= -0.05f && c >= -0.05f) {
+                        const float tri_y = a * v0[1] + b * v1[1] + c * v2[1];
+                        const float dy = std::abs(tri_y - y_est);
+                        if (dy < best_score) {
+                            best_score = dy;
+                            best_y = tri_y;
+                        }
+                    }
+                }
+            }
+            if (best_score < 1e20f) return best_y;
+            for (const auto& tri : floor) {
+                const float cx = (tri.points[0][0] + tri.points[1][0] + tri.points[2][0]) / 3.0f;
+                const float cy = (tri.points[0][1] + tri.points[1][1] + tri.points[2][1]) / 3.0f;
+                const float cz = (tri.points[0][2] + tri.points[1][2] + tri.points[2][2]) / 3.0f;
+                const float d = std::hypot(cx - x, cz - z) + std::abs(cy - y_est) * 0.5f;
+                if (d < best_score) {
+                    best_score = d;
+                    best_y = cy;
+                }
+            }
+            return best_y;
+        };
+
+        std::ostringstream out;
+        out << "{\"ok\":true,\"world\":\"" << EscapeJson(h.arena->description.world)
+            << "\",\"scene\":\"" << EscapeJson(h.arena->description.scene)
+            << "\",\"substeps\":[";
+        bool first = true;
+        for (int s = 1; s <= K; ++s) {
+            const float target_d = eff_len * (static_cast<float>(s) / static_cast<float>(K));
+            std::size_t seg = 1;
+            while (seg + 1 < poly.size() && cum_len[seg] < target_d) {
+                ++seg;
+            }
+            const float seg_len = std::max(1e-4f, cum_len[seg] - cum_len[seg - 1]);
+            const float t = std::clamp((target_d - cum_len[seg - 1]) / seg_len, 0.0f, 1.0f);
+            const Point3& p0 = poly[seg - 1];
+            const Point3& p1 = poly[seg];
+            const float px = p0[0] + (p1[0] - p0[0]) * t;
+            const float py_est = p0[1] + (p1[1] - p0[1]) * t;
+            const float pz = p0[2] + (p1[2] - p0[2]) * t;
+            const float py = snap_floor_y(px, py_est, pz);
+
+            const float dx = p1[0] - p0[0];
+            const float dz = p1[2] - p0[2];
+            const float walk_yaw = (std::hypot(dx, dz) > 0.5f)
+                ? (std::atan2(dx, dz) * 57.2957795f)
+                : saved_rot[1];
+
+            leader_slot.position = {px, py, pz};
+            leader_slot.rotation = {saved_rot[0], walk_yaw, saved_rot[2]};
+
+            const std::string sub_path = out_prefix + "_sub" + std::to_string(s) + ".bmp";
+            const float anim_sec = static_cast<float>(s) * 0.24f;
+            if (RenderFrameToBmp(sub_path, width, height, std::nullopt, 22.0f, 0.0f, "C02", anim_sec)) {
+                if (!first) out << ",";
+                first = false;
+                out << "{\"p\":[" << px << "," << py << "," << pz << "],\"yaw\":" << walk_yaw
+                    << ",\"path\":\"" << EscapeJson(sub_path) << "\"}";
+            }
+        }
+        out << "]}";
+
+        // Restore exact player state and idle animation pose so simulation determinism is 100% untouched
+        leader_slot.position = start_pos;
+        leader_slot.rotation = saved_rot;
+        if (leader_slot.actor && !h.instance_scene.vertices.empty()) {
+            try {
+                int idle_idx = 0;
+                for (std::size_t ci = 0; ci < leader_slot.actor->clips.size(); ++ci) {
+                    if (leader_slot.actor->clips[ci].name == "C01") {
+                        idle_idx = static_cast<int>(ci);
+                        break;
+                    }
+                }
+                h.player_render_clip.Sample(*leader_slot.actor, idle_idx, 0.0f, h.instance_scene.vertices);
+                h.instance_renderer.UpdateVertices(h.instance_scene.vertices);
+            } catch (...) {}
+        }
+        return out.str();
     }
 
 private:
@@ -3711,6 +3883,8 @@ private:
     float time_scale_{3.0f};
     std::string prev_world_;
     std::string prev_scene_;
+    std::string last_render_scene_;
+    float last_render_yaw_{205.0f};
     std::map<std::string, std::int32_t> world_map_states_;
     std::map<std::string, std::string> ui_files_;
     std::map<std::string, EngineCheckpoint> checkpoints_;
@@ -3848,6 +4022,20 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         return std::string("{\"ok\":") + (ok ? "true" : "false") +
                ",\"event\":\"frame_rendered\",\"path\":\"" + EscapeJson(path) +
                "\",\"width\":" + std::to_string(w) + ",\"height\":" + std::to_string(h) + "}";
+    }
+    if (cmd == "render_substeps") {
+        const auto target = ExtractJsonString(line, "target").value_or("");
+        const auto prefix = ExtractJsonString(line, "prefix").value_or("/tmp/agent-pal4-sub");
+        const int w = static_cast<int>(ExtractJsonNumber(line, "width").value_or(512));
+        const int h = static_cast<int>(ExtractJsonNumber(line, "height").value_or(288));
+        const int max_sub = static_cast<int>(ExtractJsonNumber(line, "max_substeps").value_or(3));
+        std::optional<Point3> explicit_goal;
+        if (auto gx = ExtractJsonNumber(line, "x")) {
+            const float gy = static_cast<float>(ExtractJsonNumber(line, "y").value_or(0.0));
+            const float gz = static_cast<float>(ExtractJsonNumber(line, "z").value_or(0.0));
+            explicit_goal = Point3{static_cast<float>(*gx), gy, gz};
+        }
+        return engine.RenderSubstepsToTarget(target, explicit_goal, prefix, w, h, max_sub);
     }
     return "{\"ok\":false,\"error\":\"unknown command: " + EscapeJson(cmd) + "\"}";
 }

@@ -208,8 +208,10 @@ function buildCompactReplayRuns(runs, manifest) {
         state: c.state || {},
       })),
     ];
-    const steps = rawSteps.map((s) => {
+    const steps = rawSteps.map((s, idx) => {
       const st = s.state || {};
+      const prevRaw = idx > 0 ? rawSteps[idx - 1] : null;
+      const prevSt = prevRaw?.state || null;
       const scKey = `${st.world || ""}/${st.scene || ""}`;
       const pty = (st.party || [])
         .filter((p) => p.in_team)
@@ -228,6 +230,13 @@ function buildCompactReplayRuns(runs, manifest) {
       };
       const invKey = JSON.stringify(inv);
       const imgFile = resolveStepFrame(st, manifest);
+      let rawSubs = null;
+      if (r.runId === "opus-20261105T061222" && manifest?.substepsByStep?.[String(s.step)]) {
+        rawSubs = manifest.substepsByStep[String(s.step)];
+      } else if (prevSt?.world && s.args?.target) {
+        const transKey = `${prevSt.world}/${prevSt.scene}->${s.args.target}`;
+        rawSubs = manifest?.substepsByTransition?.[transKey] || null;
+      }
       const out = {
         step: s.step,
         tool: s.tool,
@@ -239,6 +248,18 @@ function buildCompactReplayRuns(runs, manifest) {
         sc: st.scene || "",
         title: st.title || "",
         img: imgFile ? `frames/${imgFile}` : "",
+        ...(rawSubs && rawSubs.length
+          ? {
+              subs: rawSubs.map((sub) => ({
+                w: sub.w,
+                sc: sub.sc,
+                p: (sub.p || [0, 0, 0]).map((v) => Math.round(Number(v) || 0)),
+                yaw: Math.round(Number(sub.yaw || 0)),
+                img: sub.img ? `frames/${sub.img}` : "",
+                tgt: sub.target || "",
+              })),
+            }
+          : {}),
         clr: Boolean(st.game_cleared),
         ldr: st.leader
           ? {
@@ -711,10 +732,11 @@ export function generateBoardHtml(runs, defaultTab = "stats") {
     position: relative; background: #09111b; border: 1px solid #223246;
     border-radius: 8px; overflow: hidden; height: 430px;
   }
-  img#rp-3d-img {
+  img.rp-3d-layer {
     position: absolute; inset: 0; width: 100%; height: 100%;
     object-fit: cover; display: block; z-index: 1;
     filter: contrast(1.03) saturate(1.05);
+    transition: opacity 0.26s ease-out;
   }
   canvas#rp-canvas {
     position: relative; z-index: 2; width: 100%; height: 430px; display: block;
@@ -1380,11 +1402,11 @@ node bench/board.mjs</code></pre>
       <button type="button" id="rp-last" title="跳至末帧 (End)">⏭ 末帧</button>
       <label for="rp-speed" style="font-size:12.5px;color:var(--ink-soft);">倍速：</label>
       <select id="rp-speed" aria-label="回放倍速">
-        <option value="1400">0.5x 慢放</option>
-        <option value="800" selected>1x 标准</option>
-        <option value="420">2x 快进</option>
-        <option value="200">4x 疾行</option>
-        <option value="90">8x 极速</option>
+        <option value="2400">0.5x 慢放细看</option>
+        <option value="1500" selected>1x 标准平滑</option>
+        <option value="850">2x 快进</option>
+        <option value="420">4x 疾行</option>
+        <option value="180">8x 极速</option>
       </select>
       <label for="rp-view-mode" style="font-size:12.5px;color:var(--ink-soft);">画面模式：</label>
       <select id="rp-view-mode" aria-label="切换 3D 实机渲染与 2D 雷达视图模式">
@@ -1414,7 +1436,8 @@ node bench/board.mjs</code></pre>
           <span id="rp-status-badge" class="vbadge ok">待命</span>
         </div>
         <div class="rp-canvas-wrap">
-          <img id="rp-3d-img" alt="OpenPAL4 原版 3D 实时渲染画面" style="display:none">
+          <img id="rp-3d-img-back" class="rp-3d-layer" alt="" style="display:none;opacity:0;">
+          <img id="rp-3d-img" class="rp-3d-layer" alt="OpenPAL4 原版 3D 实时渲染画面" style="display:none;opacity:1;">
           <canvas id="rp-canvas" width="720" height="440"></canvas>
         </div>
         <div class="rp-legend">
@@ -1527,12 +1550,65 @@ node bench/board.mjs</code></pre>
     const speedEl = document.getElementById("rp-speed");
     const viewModeEl = document.getElementById("rp-view-mode");
     const img3dEl = document.getElementById("rp-3d-img");
+    const img3dBackEl = document.getElementById("rp-3d-img-back");
     const sliderEl = document.getElementById("rp-slider");
     const msEl = document.getElementById("rp-milestones");
     const badgeEl = document.getElementById("rp-step-badge");
     const playBtn = document.getElementById("rp-play");
     const canvas = document.getElementById("rp-canvas");
     const ctx = canvas.getContext("2d");
+
+    const preloadedImages = new Map();
+    let active3dSrc = "";
+    let animRaf = 0;
+
+    function preloadFramesAround(run, idx) {
+      if (!run || !run.steps) return;
+      const end = Math.min(run.steps.length - 1, idx + 10);
+      for (let i = Math.max(0, idx - 2); i <= end; i++) {
+        const st = run.steps[i];
+        const src = st?.img;
+        if (src && !preloadedImages.has(src)) {
+          const im = new Image();
+          im.src = src;
+          preloadedImages.set(src, im);
+        }
+        if (st?.subs) {
+          for (const sub of st.subs) {
+            if (sub.img && !preloadedImages.has(sub.img)) {
+              const im = new Image();
+              im.src = sub.img;
+              preloadedImages.set(sub.img, im);
+            }
+          }
+        }
+      }
+    }
+
+    function update3dImageLayer(src, show3dBg) {
+      if (!img3dEl) return;
+      if (!show3dBg || !src) {
+        img3dEl.style.display = "none";
+        if (img3dBackEl) img3dBackEl.style.display = "none";
+        active3dSrc = "";
+        return;
+      }
+      img3dEl.style.display = "block";
+      if (active3dSrc === src) return;
+      if (img3dBackEl && active3dSrc) {
+        img3dBackEl.setAttribute("src", active3dSrc);
+        img3dBackEl.style.display = "block";
+        img3dBackEl.style.opacity = "1";
+      }
+      active3dSrc = src;
+      img3dEl.style.transition = "none";
+      img3dEl.style.opacity = "0";
+      img3dEl.setAttribute("src", src);
+      requestAnimationFrame(() => {
+        img3dEl.style.transition = "opacity 0.26s ease-out";
+        img3dEl.style.opacity = "1";
+      });
+    }
 
     function populateRunSelect() {
       selEl.innerHTML = runs
@@ -1620,44 +1696,108 @@ node bench/board.mjs</code></pre>
         .join("");
     }
 
-    function drawRadar(run, stepIdx) {
-      const s = run.steps[stepIdx];
-      if (!s) return;
+    function drawRadar(run, stepIdx, tweenAlpha = 1.0, prevStepIdx = -1, subState = null) {
+      const rawStep = run.steps[stepIdx];
+      if (!rawStep) return;
+      // When rendering a walking sub-step prior to a portal transition, use the origin scene's step metadata
+      const s = subState?.sceneStep || rawStep;
+      const activeImg = subState?.img || rawStep.img;
       const W = canvas.width,
         H = canvas.height;
       ctx.clearRect(0, 0, W, H);
 
       const viewMode = viewModeEl ? viewModeEl.value : "pip";
-      const has3d = Boolean(s.img);
+      const has3d = Boolean(activeImg);
       const show3dBg = has3d && viewMode !== "radar";
 
-      if (img3dEl) {
-        if (show3dBg) {
-          if (img3dEl.getAttribute("src") !== s.img) {
-            img3dEl.setAttribute("src", s.img);
-          }
-          img3dEl.style.display = "block";
-        } else {
-          img3dEl.style.display = "none";
+      if (tweenAlpha >= 1.0 || active3dSrc !== activeImg) {
+        update3dImageLayer(activeImg, show3dBg);
+      }
+
+      const scKey = \`\${s.w}/\${s.sc}\`;
+      const prevStep = prevStepIdx >= 0 ? run.steps[prevStepIdx] : null;
+      let curPos = s.ldr?.p || [0, 0, 0];
+      let curYaw = s.ldr?.yaw || 0;
+
+      if (subState) {
+        const fromP = subState.fromP || curPos;
+        const toP = subState.toP || curPos;
+        curPos = [
+          Math.round(fromP[0] + (toP[0] - fromP[0]) * tweenAlpha),
+          Math.round(fromP[1] + (toP[1] - fromP[1]) * tweenAlpha),
+          Math.round(fromP[2] + (toP[2] - fromP[2]) * tweenAlpha),
+        ];
+        curYaw = subState.yaw ?? curYaw;
+      } else {
+        const canTween =
+          tweenAlpha < 1.0 &&
+          prevStep &&
+          \`\${prevStep.w}/\${prevStep.sc}\` === scKey &&
+          prevStep.ldr?.p?.length >= 3 &&
+          s.ldr?.p?.length >= 3;
+        if (canTween) {
+          curPos = [
+            Math.round(prevStep.ldr.p[0] + (s.ldr.p[0] - prevStep.ldr.p[0]) * tweenAlpha),
+            Math.round(prevStep.ldr.p[1] + (s.ldr.p[1] - prevStep.ldr.p[1]) * tweenAlpha),
+            Math.round(prevStep.ldr.p[2] + (s.ldr.p[2] - prevStep.ldr.p[2]) * tweenAlpha),
+          ];
+          curYaw = Math.round((prevStep.ldr.yaw || 0) + ((s.ldr.yaw || 0) - (prevStep.ldr.yaw || 0)) * tweenAlpha);
         }
       }
 
-      // 收集本场景内所有实体的 X/Z 坐标以自适应缩放
-      const scKey = \`\${s.w}/\${s.sc}\`;
+      // 历史移动轨迹（含子步轨迹点）
       const sceneTrail = [];
-      for (let i = 0; i <= stepIdx; i++) {
+      const trailLimit = subState ? stepIdx : stepIdx;
+      for (let i = 0; i < trailLimit; i++) {
         const st = run.steps[i];
+        if (st.subs) {
+          for (const sub of st.subs) {
+            if (\`\${sub.w}/\${sub.sc}\` === scKey && sub.p?.length >= 3) {
+              sceneTrail.push({ step: st.step, p: sub.p, yaw: sub.yaw || 0, n: st.ldr?.n || "云天河" });
+            }
+          }
+        }
         if (\`\${st.w}/\${st.sc}\` === scKey && st.ldr?.p?.length >= 3) {
           sceneTrail.push({ step: st.step, p: st.ldr.p, yaw: st.ldr.yaw || 0, n: st.ldr.n });
         }
       }
+      if (subState && rawStep.subs) {
+        for (let k = 0; k < subState.subIdx - 1; k++) {
+          const sub = rawStep.subs[k];
+          if (sub && \`\${sub.w}/\${sub.sc}\` === scKey) {
+            sceneTrail.push({ step: rawStep.step, p: sub.p, yaw: sub.yaw || 0, n: s.ldr?.n || "云天河" });
+          }
+        }
+      } else if (!subState && rawStep.subs) {
+        for (const sub of rawStep.subs) {
+          if (\`\${sub.w}/\${sub.sc}\` === scKey && sub.p?.length >= 3) {
+            sceneTrail.push({ step: rawStep.step, p: sub.p, yaw: sub.yaw || 0, n: s.ldr?.n || "云天河" });
+          }
+        }
+      }
+      if (s.ldr?.p?.length >= 3) {
+        sceneTrail.push({ step: rawStep.step, p: curPos, yaw: curYaw, n: s.ldr.n });
+      }
 
+      // 锁定同一场景的固定包围盒（汇总该场景在全流程中的所有坐标点及子步点，防止随步数推进而跳动缩放）
       const pts = [];
-      sceneTrail.forEach((t) => pts.push([t.p[0], t.p[2]]));
-      (s.npcs || []).forEach((n) => n.p?.length >= 3 && pts.push([n.p[0], n.p[2]]));
-      (s.objs || []).forEach((o) => o.p?.length >= 3 && pts.push([o.p[0], o.p[2]]));
-      (s.evs || []).forEach((e) => e.p?.length >= 3 && pts.push([e.p[0], e.p[2]]));
-      (s.mons || []).forEach((m) => m.p?.length >= 3 && pts.push([m.p[0], m.p[2]]));
+      for (let i = 0; i < run.steps.length; i++) {
+        const st = run.steps[i];
+        if (\`\${st.w}/\${st.sc}\` === scKey) {
+          if (st.ldr?.p?.length >= 3) pts.push([st.ldr.p[0], st.ldr.p[2]]);
+          (st.npcs || []).forEach((n) => n.p?.length >= 3 && pts.push([n.p[0], n.p[2]]));
+          (st.objs || []).forEach((o) => o.p?.length >= 3 && pts.push([o.p[0], o.p[2]]));
+          (st.evs || []).forEach((e) => e.p?.length >= 3 && pts.push([e.p[0], e.p[2]]));
+          (st.mons || []).forEach((m) => m.p?.length >= 3 && pts.push([m.p[0], m.p[2]]));
+        }
+        if (st.subs) {
+          st.subs.forEach((sub) => {
+            if (\`\${sub.w}/\${sub.sc}\` === scKey && sub.p?.length >= 3) {
+              pts.push([sub.p[0], sub.p[2]]);
+            }
+          });
+        }
+      }
       if (!pts.length) pts.push([0, 0]);
 
       let minX = Math.min(...pts.map((p) => p[0])),
@@ -1715,7 +1855,7 @@ node bench/board.mjs</code></pre>
           ctx.stroke();
         }
 
-        const targetName = s.args?.target || s.j?.wp || "";
+        const targetName = subState?.tgt || rawStep.args?.target || s.j?.wp || "";
         let targetPt = null;
 
         // 1. 绘制 .evf 触发点 / 传送门 (紫罗兰环)
@@ -1812,8 +1952,8 @@ node bench/board.mjs</code></pre>
 
         // 6. 绘制当前领队位置与交互光束
         if (s.ldr?.p?.length >= 3) {
-          const lx = toX(s.ldr.p[0]),
-            ly = toY(s.ldr.p[2]);
+          const lx = toX(curPos[0]),
+            ly = toY(curPos[2]);
           if (targetPt) {
             ctx.save();
             ctx.strokeStyle = "rgba(253, 224, 71, 0.82)";
@@ -1841,7 +1981,7 @@ node bench/board.mjs</code></pre>
           ctx.stroke();
 
           // 朝向箭头
-          const rad = ((s.ldr.yaw || 0) * Math.PI) / 180;
+          const rad = (curYaw * Math.PI) / 180;
           ctx.strokeStyle = "#fde047";
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -1852,7 +1992,7 @@ node bench/board.mjs</code></pre>
           if (!isPip) {
             ctx.fillStyle = "#ecfdf5";
             ctx.font = "bold 12px sans-serif";
-            ctx.fillText(\`\${s.ldr.n} (\${s.ldr.p[0]}, \${s.ldr.p[1]}, \${s.ldr.p[2]})\`, lx + 12, ly - 10);
+            ctx.fillText(\`\${s.ldr.n} (\${curPos[0]}, \${curPos[1]}, \${curPos[2]})\`, lx + 12, ly - 10);
           }
         }
 
@@ -1888,33 +2028,48 @@ node bench/board.mjs</code></pre>
         ctx.fillStyle = "#ecfdf5";
         ctx.font = "bold 11.5px monospace";
         ctx.fillText(
-          \`👤 \${s.ldr.n} (\${s.ldr.p[0]}, \${s.ldr.p[1]}, \${s.ldr.p[2]}) · 朝向 \${s.ldr.yaw || 0}°\`,
+          \`👤 \${s.ldr.n} (\${curPos[0]}, \${curPos[1]}, \${curPos[2]}) · 朝向 \${curYaw}°\`,
           20,
           H - 21,
         );
       }
 
-      if (s.tool === "combat_action" || s.cbt?.act || /combat_victory/i.test(s.ev)) {
+      if (subState) {
+        ctx.fillStyle = "rgba(16, 108, 78, 0.90)";
+        ctx.fillRect(W - 285, 14, 270, 40);
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.65)";
+        ctx.strokeRect(W - 285, 14, 270, 40);
+        ctx.fillStyle = "#ecfdf5";
+        ctx.font = "bold 13px serif";
+        ctx.fillText(
+          \`🏃 寻路跑动序列帧 (\${subState.subIdx}/\${subState.subTotal})\`,
+          W - 273,
+          33,
+        );
+        ctx.fillStyle = "#fde047";
+        ctx.font = "11px monospace";
+        ctx.fillText(\`目标 → \${subState.tgt || rawStep.args?.target || "前方触发点"}\`, W - 273, 48);
+      } else if (rawStep.tool === "combat_action" || rawStep.cbt?.act || /combat_victory/i.test(rawStep.ev)) {
         ctx.fillStyle = "rgba(168, 46, 38, 0.88)";
         ctx.fillRect(W - 265, 14, 250, 42);
         ctx.fillStyle = "#fff";
         ctx.font = "bold 13.5px serif";
         ctx.fillText(
-          /combat_victory/i.test(s.ev) ? "⚔️ 五灵战斗获胜 (BOSS DEFEATED)" : "⚔️ 五灵回合战斗进行中",
+          /combat_victory/i.test(rawStep.ev) ? "⚔️ 五灵战斗获胜 (BOSS DEFEATED)" : "⚔️ 五灵回合战斗进行中",
           W - 253,
           34,
         );
         ctx.font = "11px monospace";
-        ctx.fillText(\`累计击败头目: \${s.cbt?.v ?? 0} 场\`, W - 253, 49);
-      } else if (s.tool === "fly_to") {
+        ctx.fillText(\`累计击败头目: \${rawStep.cbt?.v ?? 0} 场\`, W - 253, 49);
+      } else if (rawStep.tool === "fly_to") {
         ctx.fillStyle = "rgba(35, 87, 122, 0.9)";
         ctx.fillRect(W - 255, 14, 240, 38);
         ctx.fillStyle = "#fde047";
         ctx.font = "bold 13.5px serif";
-        ctx.fillText(\`🗡️ 御剑飞行 → \${s.args?.destination || s.w}\`, W - 242, 38);
+        ctx.fillText(\`🗡️ 御剑飞行 → \${rawStep.args?.destination || rawStep.w}\`, W - 242, 38);
       }
 
-      if (s.clr) {
+      if (!subState && rawStep.clr) {
         ctx.fillStyle = "rgba(31, 110, 74, 0.92)";
         ctx.fillRect(W / 2 - 175, H - 84, 350, 40);
         ctx.fillStyle = "#fff";
@@ -1923,14 +2078,28 @@ node bench/board.mjs</code></pre>
       }
     }
 
-    function setStep(idx) {
+    let subTimers = [];
+    function clearSubTimers() {
+      while (subTimers.length) {
+        clearTimeout(subTimers.pop());
+      }
+      if (animRaf) {
+        cancelAnimationFrame(animRaf);
+        animRaf = 0;
+      }
+    }
+
+    function setStep(idx, playSubs = false) {
       const run = runs[curRunIdx];
-      if (!run || !run.steps?.length) return;
+      if (!run || !run.steps?.length) return 600;
+      clearSubTimers();
+      const prevIdx = playSubs ? curStepIdx : -1;
       curStepIdx = Math.max(0, Math.min(run.steps.length - 1, idx));
       sliderEl.value = String(curStepIdx);
       const s = run.steps[curStepIdx];
+      const totalStepNum = run.steps[run.steps.length - 1].step;
 
-      badgeEl.textContent = \`Step \${s.step} / \${run.steps[run.steps.length - 1].step}\`;
+      badgeEl.textContent = \`Step \${s.step} / \${totalStepNum}\`;
       document.getElementById("rp-scene-title").textContent = \`\${s.w || "-"}/\${s.sc || "-"} · \${s.title || ""}\`;
       document.getElementById("rp-scene-sub").textContent = \`Frame \${s.frame} · 累计 \${s.cbt?.v ?? 0} 胜\`;
 
@@ -1987,14 +2156,98 @@ node bench/board.mjs</code></pre>
       }
       if (activeChip) activeChip.classList.add("active");
 
-      drawRadar(run, curStepIdx);
+      preloadFramesAround(run, curStepIdx);
+      const baseSpeed = Number(speedEl.value) || 1200;
+      const prevSt = prevIdx >= 0 ? run.steps[prevIdx] : curStepIdx > 0 ? run.steps[curStepIdx - 1] : null;
+
+      // 若包含子步连续序列帧 (subs)，先逐帧播放原场景内的 3D 骨骼跑动帧，最后切换到本步终态帧
+      if (playSubs && s.subs && s.subs.length > 0) {
+        const subCount = s.subs.length;
+        const perSubMs = Math.max(220, Math.min(460, Math.round(baseSpeed * 0.36)));
+        const originSceneStep =
+          prevSt && \`\${prevSt.w}/\${prevSt.sc}\` === \`\${s.subs[0].w}/\${s.subs[0].sc}\` ? prevSt : s;
+
+        s.subs.forEach((sub, k) => {
+          const tid = setTimeout(() => {
+            const fromP = k === 0 ? originSceneStep.ldr?.p || sub.p : s.subs[k - 1].p;
+            const toP = sub.p;
+            badgeEl.textContent = \`Step \${s.step} / \${totalStepNum} · 🏃 子步 \${k + 1}/\${subCount}\`;
+            const subState = {
+              subIdx: k + 1,
+              subTotal: subCount,
+              img: sub.img,
+              fromP,
+              toP,
+              yaw: sub.yaw,
+              tgt: sub.tgt || s.args?.target || "",
+              sceneStep: originSceneStep,
+            };
+            const t0 = performance.now();
+            const dur = perSubMs * 0.88;
+            const tick = (now) => {
+              const alpha = Math.min(1.0, (now - t0) / dur);
+              drawRadar(run, curStepIdx, alpha, prevIdx, subState);
+              if (alpha < 1.0) animRaf = requestAnimationFrame(tick);
+            };
+            animRaf = requestAnimationFrame(tick);
+          }, k * perSubMs);
+          subTimers.push(tid);
+        });
+
+        const finalTid = setTimeout(() => {
+          badgeEl.textContent = \`Step \${s.step} / \${totalStepNum}\`;
+          const lastSub = s.subs[subCount - 1];
+          if (\`\${lastSub.w}/\${lastSub.sc}\` === \`\${s.w}/\${s.sc}\` && s.ldr?.p?.length >= 3) {
+            const subFinal = {
+              subIdx: subCount,
+              subTotal: subCount,
+              img: s.img,
+              fromP: lastSub.p,
+              toP: s.ldr.p,
+              yaw: s.ldr.yaw,
+              tgt: s.args?.target || "",
+              sceneStep: s,
+            };
+            const t0 = performance.now();
+            const dur = perSubMs * 0.85;
+            const tick = (now) => {
+              const alpha = Math.min(1.0, (now - t0) / dur);
+              drawRadar(run, curStepIdx, alpha, prevIdx, alpha < 1.0 ? subFinal : null);
+              if (alpha < 1.0) animRaf = requestAnimationFrame(tick);
+            };
+            animRaf = requestAnimationFrame(tick);
+          } else {
+            drawRadar(run, curStepIdx, 1.0, -1, null);
+          }
+        }, subCount * perSubMs);
+        subTimers.push(finalTid);
+
+        return (subCount + 1) * perSubMs + Math.round(baseSpeed * 0.35);
+      }
+
+      if (playSubs && prevSt && \`\${prevSt.w}/\${prevSt.sc}\` === \`\${s.w}/\${s.sc}\`) {
+        const dur = Math.min(520, Math.max(160, baseSpeed * 0.48));
+        const t0 = performance.now();
+        update3dImageLayer(s.img, Boolean(s.img) && (viewModeEl ? viewModeEl.value : "pip") !== "radar");
+        const tick = (now) => {
+          const alpha = Math.min(1.0, (now - t0) / dur);
+          const ease = 1 - Math.pow(1 - alpha, 3);
+          drawRadar(run, curStepIdx, ease, prevIdx, null);
+          if (alpha < 1.0) animRaf = requestAnimationFrame(tick);
+        };
+        animRaf = requestAnimationFrame(tick);
+      } else {
+        drawRadar(run, curStepIdx, 1.0, -1, null);
+      }
+      return baseSpeed;
     }
 
     function stopPlay() {
       if (timer) {
-        clearInterval(timer);
+        clearTimeout(timer);
         timer = null;
       }
+      clearSubTimers();
       playBtn.textContent = "▶️ 播放";
     }
 
@@ -2002,17 +2255,20 @@ node bench/board.mjs</code></pre>
       stopPlay();
       const run = runs[curRunIdx];
       if (!run) return;
-      if (curStepIdx >= run.steps.length - 1) setStep(0);
+      if (curStepIdx >= run.steps.length - 1) setStep(0, false);
       playBtn.textContent = "⏸ 暂停";
-      const interval = Number(speedEl.value) || 800;
-      timer = setInterval(() => {
+      const stepNext = () => {
         const r = runs[curRunIdx];
         if (!r || curStepIdx >= r.steps.length - 1) {
           stopPlay();
           return;
         }
-        setStep(curStepIdx + 1);
-      }, interval);
+        const waitMs = setStep(curStepIdx + 1, true);
+        timer = setTimeout(stepNext, waitMs);
+      };
+      const curS = run.steps[curStepIdx];
+      const firstWait = Math.max(300, Math.round((Number(speedEl.value) || 1200) * 0.5));
+      timer = setTimeout(stepNext, curS ? firstWait : 400);
     }
 
     selEl.addEventListener("change", () => selectRun(Number(selEl.value)));
@@ -2027,24 +2283,24 @@ node bench/board.mjs</code></pre>
     }
     sliderEl.addEventListener("input", () => {
       stopPlay();
-      setStep(Number(sliderEl.value));
+      setStep(Number(sliderEl.value), false);
     });
     document.getElementById("rp-first").addEventListener("click", () => {
       stopPlay();
-      setStep(0);
+      setStep(0, false);
     });
     document.getElementById("rp-prev").addEventListener("click", () => {
       stopPlay();
-      setStep(curStepIdx - 1);
+      setStep(curStepIdx - 1, false);
     });
     document.getElementById("rp-next").addEventListener("click", () => {
       stopPlay();
-      setStep(curStepIdx + 1);
+      setStep(curStepIdx + 1, true);
     });
     document.getElementById("rp-last").addEventListener("click", () => {
       stopPlay();
       const r = runs[curRunIdx];
-      if (r) setStep(r.steps.length - 1);
+      if (r) setStep(r.steps.length - 1, false);
     });
     playBtn.addEventListener("click", () => {
       if (timer) stopPlay();
@@ -2059,11 +2315,11 @@ node bench/board.mjs</code></pre>
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         stopPlay();
-        setStep(curStepIdx - 1);
+        setStep(curStepIdx - 1, false);
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         stopPlay();
-        setStep(curStepIdx + 1);
+        setStep(curStepIdx + 1, true);
       } else if (e.key === " ") {
         e.preventDefault();
         if (timer) stopPlay();
