@@ -156,8 +156,45 @@ export function loadRuns(root = OUT_ROOT) {
   return runs;
 }
 
+/** 加载预渲染的原版 3D 帧清单 (web/frames/manifest.json) */
+function loadFrameManifest() {
+  const candidates = [
+    path.resolve(__dirname, "../web/frames/manifest.json"),
+    path.resolve(OUT_ROOT, "frames/manifest.json"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      try {
+        return JSON.parse(fs.readFileSync(p, "utf8"));
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return { byPos: {}, bySceneLeader: {}, byScene: {}, byWorld: {} };
+}
+
+function resolveStepFrame(st, manifest) {
+  if (!st || !manifest) return "";
+  const w = st.world || "";
+  const sc = st.scene || "";
+  const ldrName = st.leader?.name || "云天河";
+  const rawPos = st.leader?.position || [0, 0, 0];
+  const p = rawPos.map((x) => Math.round((Number(x) || 0) / 10) * 10).join(",");
+  const posKey = `${w}/${sc}@${ldrName}@${p}`;
+  const scLdrKey = `${w}/${sc}@${ldrName}`;
+  const scKey = `${w}/${sc}`;
+  return (
+    manifest.byPos?.[posKey] ||
+    manifest.bySceneLeader?.[scLdrKey] ||
+    manifest.byScene?.[scKey] ||
+    manifest.byWorld?.[w] ||
+    ""
+  );
+}
+
 /** 将所有运行的完整轨迹压缩为自包含的增量回放数据包（供前端回放器零延迟加载） */
-function buildCompactReplayRuns(runs) {
+function buildCompactReplayRuns(runs, manifest) {
   return runs.map((r) => {
     let prevScKey = "",
       prevInvKey = "",
@@ -190,6 +227,7 @@ function buildCompactReplayRuns(runs) {
         it: (st.inventory?.items || []).slice(0, 18).map((i) => `${i.name}×${i.count}`),
       };
       const invKey = JSON.stringify(inv);
+      const imgFile = resolveStepFrame(st, manifest);
       const out = {
         step: s.step,
         tool: s.tool,
@@ -200,6 +238,7 @@ function buildCompactReplayRuns(runs) {
         w: st.world || "",
         sc: st.scene || "",
         title: st.title || "",
+        img: imgFile ? `frames/${imgFile}` : "",
         clr: Boolean(st.game_cleared),
         ldr: st.leader
           ? {
@@ -448,7 +487,12 @@ export function generateBoardHtml(runs, defaultTab = "stats") {
   const pureFull = cpkOpus || cpkArgon || synthPureArgon || runs[0];
   const normalFull = runs.find((r) => r.mode === "normal" && r.gameCleared);
   const verifiedCount = runs.filter((r) => r.verifyState === "verified").length;
-  const replayDataJson = JSON.stringify(buildCompactReplayRuns(runs)).replace(/<\//g, "<\\/");
+  const frameManifest = loadFrameManifest();
+  const replayDataJson = JSON.stringify({
+    runs: buildCompactReplayRuns(runs, frameManifest),
+    byScene: frameManifest.byScene || {},
+    byWorld: frameManifest.byWorld || {},
+  }).replace(/<\//g, "<\\/");
 
   const stepReductionPct =
     synthPureArgon && normalFull
@@ -665,9 +709,16 @@ export function generateBoardHtml(runs, defaultTab = "stats") {
   }
   .rp-canvas-wrap {
     position: relative; background: #09111b; border: 1px solid #223246;
-    border-radius: 8px; overflow: hidden;
+    border-radius: 8px; overflow: hidden; height: 430px;
   }
-  canvas#rp-canvas { width: 100%; height: 430px; display: block; }
+  img#rp-3d-img {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; display: block; z-index: 1;
+    filter: contrast(1.03) saturate(1.05);
+  }
+  canvas#rp-canvas {
+    position: relative; z-index: 2; width: 100%; height: 430px; display: block;
+  }
   .rp-legend {
     display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--ink-soft);
   }
@@ -1317,7 +1368,7 @@ node bench/board.mjs</code></pre>
 
   <!-- ==================== TAB REPLAY: Web 交互式 3D 轨迹与剧情回放器 ==================== -->
   <section id="pane-replay" class="tab-pane">
-    <h2>🎬 问情论剑 · Web 交互式 3D 轨迹与原版剧情回放器<small>内置全部 ${runs.length} 局完整通关快照 · 支持倍速播放、章节跳关、3D 场景态势图与加载外部 <code>episode.jsonl</code></small></h2>
+    <h2>🎬 问情论剑 · Web 交互式原版 3D 实机画面与轨迹回放器<small>内置全部 ${runs.length} 局完整通关快照 · OpenPAL4 原版 <code>.cpk</code> 3D 光栅化渲染 + 2D 战术雷达同屏 (PiP) · 支持加载外部 <code>episode.jsonl</code></small></h2>
 
     <div class="rp-toolbar">
       <label for="rp-run-select" style="font-weight:700;font-size:13px;">选择通关记录：</label>
@@ -1334,6 +1385,12 @@ node bench/board.mjs</code></pre>
         <option value="420">2x 快进</option>
         <option value="200">4x 疾行</option>
         <option value="90">8x 极速</option>
+      </select>
+      <label for="rp-view-mode" style="font-size:12.5px;color:var(--ink-soft);">画面模式：</label>
+      <select id="rp-view-mode" aria-label="切换 3D 实机渲染与 2D 雷达视图模式">
+        <option value="pip" selected>🎮 3D原版画面 + 雷达同屏 (PiP)</option>
+        <option value="3d">🖼️ 纯净 3D 原版渲染画面</option>
+        <option value="radar">🧭 全屏 2D 俯视战术雷达</option>
       </select>
       <label class="rp-file" title="加载任意本地 episode.jsonl 文件进行回放">
         📂 加载本地 episode.jsonl
@@ -1357,6 +1414,7 @@ node bench/board.mjs</code></pre>
           <span id="rp-status-badge" class="vbadge ok">待命</span>
         </div>
         <div class="rp-canvas-wrap">
+          <img id="rp-3d-img" alt="OpenPAL4 原版 3D 实时渲染画面" style="display:none">
           <canvas id="rp-canvas" width="720" height="440"></canvas>
         </div>
         <div class="rp-legend">
@@ -1432,7 +1490,10 @@ node bench/board.mjs</code></pre>
 
   // ── Web 交互式 3D 轨迹与剧情回放器核心逻辑 ──
   (function () {
-    const rawRuns = JSON.parse(document.getElementById("rp-embedded-data").textContent || "[]");
+    const embeddedPayload = JSON.parse(document.getElementById("rp-embedded-data").textContent || "{}");
+    const rawRuns = Array.isArray(embeddedPayload) ? embeddedPayload : (embeddedPayload.runs || []);
+    const sceneFrameMap = embeddedPayload.byScene || {};
+    const worldFrameMap = embeddedPayload.byWorld || {};
 
     // 展开增量编码步骤（补齐继承的 pty, inv, npcs, objs, evs, mons）
     function hydrateRun(run) {
@@ -1449,7 +1510,10 @@ node bench/board.mjs</code></pre>
         if (s.objs) objs = s.objs;
         if (s.evs) evs = s.evs;
         if (s.mons) mons = s.mons;
-        return Object.assign({}, s, { pty, inv, npcs, objs, evs, mons });
+        const scKey = \`\${s.w || ""}/\${s.sc || ""}\`;
+        const fallbackImg = sceneFrameMap[scKey] || worldFrameMap[s.w || ""] || "";
+        const img = s.img || (fallbackImg ? \`frames/\${fallbackImg}\` : "");
+        return Object.assign({}, s, { img, pty, inv, npcs, objs, evs, mons });
       });
       return Object.assign({}, run, { steps: hydrated });
     }
@@ -1461,6 +1525,8 @@ node bench/board.mjs</code></pre>
 
     const selEl = document.getElementById("rp-run-select");
     const speedEl = document.getElementById("rp-speed");
+    const viewModeEl = document.getElementById("rp-view-mode");
+    const img3dEl = document.getElementById("rp-3d-img");
     const sliderEl = document.getElementById("rp-slider");
     const msEl = document.getElementById("rp-milestones");
     const badgeEl = document.getElementById("rp-step-badge");
@@ -1561,12 +1627,20 @@ node bench/board.mjs</code></pre>
         H = canvas.height;
       ctx.clearRect(0, 0, W, H);
 
-      // 背景渐变与罗盘网格
-      const bg = ctx.createLinearGradient(0, 0, 0, H);
-      bg.addColorStop(0, "#08111c");
-      bg.addColorStop(1, "#0f1e30");
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, W, H);
+      const viewMode = viewModeEl ? viewModeEl.value : "pip";
+      const has3d = Boolean(s.img);
+      const show3dBg = has3d && viewMode !== "radar";
+
+      if (img3dEl) {
+        if (show3dBg) {
+          if (img3dEl.getAttribute("src") !== s.img) {
+            img3dEl.setAttribute("src", s.img);
+          }
+          img3dEl.style.display = "block";
+        } else {
+          img3dEl.style.display = "none";
+        }
+      }
 
       // 收集本场景内所有实体的 X/Z 坐标以自适应缩放
       const scKey = \`\${s.w}/\${s.sc}\`;
@@ -1593,168 +1667,232 @@ node bench/board.mjs</code></pre>
       const span = Math.max(120, maxX - minX, maxZ - minZ) * 1.25;
       const cx = (minX + maxX) / 2,
         cz = (minZ + maxZ) / 2;
-      const pad = 44;
-      const drawW = W - pad * 2,
-        drawH = H - pad * 2;
-      const toX = (x) => pad + ((x - (cx - span / 2)) / span) * drawW;
-      const toY = (z) => pad + ((z - (cz - span / 2)) / span) * drawH;
 
-      // 网格线
-      ctx.strokeStyle = "rgba(108, 180, 232, 0.11)";
-      ctx.lineWidth = 1;
-      for (let g = 1; g < 6; g++) {
-        const gx = (W / 6) * g,
-          gy = (H / 6) * g;
+      // 确定雷达绘制区域：若处于 3D+雷达同屏 (PiP)，则在右下角小窗绘制；若处于全屏雷达，则铺满画布
+      const isPip = show3dBg && viewMode === "pip";
+      const drawRadarLayer = !show3dBg || isPip;
+      const rx0 = isPip ? W - 256 : 0;
+      const ry0 = isPip ? H - 176 : 0;
+      const rW = isPip ? 244 : W;
+      const rH = isPip ? 164 : H;
+      const pad = isPip ? 18 : 44;
+      const drawW = rW - pad * 2,
+        drawH = rH - pad * 2;
+      const toX = (x) => rx0 + pad + ((x - (cx - span / 2)) / span) * drawW;
+      const toY = (z) => ry0 + pad + ((z - (cz - span / 2)) / span) * drawH;
+
+      if (drawRadarLayer) {
+        ctx.save();
         ctx.beginPath();
-        ctx.moveTo(gx, 0);
-        ctx.lineTo(gx, H);
-        ctx.moveTo(0, gy);
-        ctx.lineTo(W, gy);
-        ctx.stroke();
-      }
+        ctx.rect(rx0, ry0, rW, rH);
+        ctx.clip();
 
-      const targetName = s.args?.target || s.j?.wp || "";
-      let targetPt = null;
+        if (isPip) {
+          ctx.fillStyle = "rgba(8, 17, 28, 0.80)";
+          ctx.fillRect(rx0, ry0, rW, rH);
+          ctx.strokeStyle = "rgba(108, 180, 232, 0.55)";
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(rx0 + 0.75, ry0 + 0.75, rW - 1.5, rH - 1.5);
+        } else {
+          const bg = ctx.createLinearGradient(0, 0, 0, H);
+          bg.addColorStop(0, "#08111c");
+          bg.addColorStop(1, "#0f1e30");
+          ctx.fillStyle = bg;
+          ctx.fillRect(0, 0, W, H);
+        }
 
-      // 1. 绘制 .evf 触发点 / 传送门 (紫罗兰六边形环)
-      ctx.font = "11px monospace";
-      (s.evs || []).forEach((e) => {
-        if (!e.p || e.p.length < 3) return;
-        const x = toX(e.p[0]),
-          y = toY(e.p[2]);
-        const isTgt = e.n === targetName;
-        if (isTgt) targetPt = [x, y];
-        ctx.strokeStyle = isTgt ? "#fde047" : "#a78bfa";
-        ctx.lineWidth = isTgt ? 2.5 : 1.5;
-        ctx.beginPath();
-        ctx.arc(x, y, isTgt ? 8 : 5.5, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = isTgt ? "#fde047" : "rgba(196, 181, 253, 0.85)";
-        ctx.fillText(e.n, x + 8, y + 3);
-      });
-
-      // 2. 绘制场景机关 / 道具 GOB (琥珀金圆点)
-      (s.objs || []).forEach((o) => {
-        if (!o.p || o.p.length < 3) return;
-        const x = toX(o.p[0]),
-          y = toY(o.p[2]);
-        const isTgt = o.n === targetName;
-        if (isTgt) targetPt = [x, y];
-        ctx.fillStyle = isTgt ? "#fde047" : "#f59e0b";
-        ctx.beginPath();
-        ctx.arc(x, y, isTgt ? 6.5 : 4.2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = isTgt ? "#fde047" : "rgba(251, 191, 36, 0.88)";
-        ctx.fillText(o.n, x + 7, y + 3);
-      });
-
-      // 3. 绘制 NPC (青玉菱形)
-      (s.npcs || []).forEach((n) => {
-        if (!n.p || n.p.length < 3) return;
-        const x = toX(n.p[0]),
-          y = toY(n.p[2]);
-        const isTgt = n.n === targetName;
-        if (isTgt) targetPt = [x, y];
-        ctx.fillStyle = isTgt ? "#fde047" : "#38bdf8";
-        ctx.beginPath();
-        ctx.moveTo(x, y - 6);
-        ctx.lineTo(x + 6, y);
-        ctx.lineTo(x, y + 6);
-        ctx.lineTo(x - 6, y);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillText(n.n, x + 8, y + 4);
-      });
-
-      // 4. 绘制迷宫怪物 (赤红三角)
-      (s.mons || []).forEach((m) => {
-        if (!m.p || m.p.length < 3) return;
-        const x = toX(m.p[0]),
-          y = toY(m.p[2]);
-        ctx.fillStyle = "#f87171";
-        ctx.beginPath();
-        ctx.moveTo(x, y - 5);
-        ctx.lineTo(x + 5, y + 5);
-        ctx.lineTo(x - 5, y + 5);
-        ctx.closePath();
-        ctx.fill();
-      });
-
-      // 5. 绘制本幕内领队移动历史轨迹
-      if (sceneTrail.length > 1) {
-        ctx.strokeStyle = "rgba(52, 211, 153, 0.65)";
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        sceneTrail.forEach((t, idx) => {
-          const x = toX(t.p[0]),
-            y = toY(t.p[2]);
-          if (idx === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-        sceneTrail.forEach((t) => {
-          ctx.fillStyle = "rgba(52, 211, 153, 0.45)";
+        // 网格线
+        ctx.strokeStyle = "rgba(108, 180, 232, 0.12)";
+        ctx.lineWidth = 1;
+        for (let g = 1; g < 5; g++) {
+          const gx = rx0 + (rW / 5) * g,
+            gy = ry0 + (rH / 5) * g;
           ctx.beginPath();
-          ctx.arc(toX(t.p[0]), toY(t.p[2]), 3, 0, Math.PI * 2);
+          ctx.moveTo(gx, ry0);
+          ctx.lineTo(gx, ry0 + rH);
+          ctx.moveTo(rx0, gy);
+          ctx.lineTo(rx0 + rW, gy);
+          ctx.stroke();
+        }
+
+        const targetName = s.args?.target || s.j?.wp || "";
+        let targetPt = null;
+
+        // 1. 绘制 .evf 触发点 / 传送门 (紫罗兰环)
+        ctx.font = isPip ? "9.5px monospace" : "11px monospace";
+        (s.evs || []).forEach((e) => {
+          if (!e.p || e.p.length < 3) return;
+          const x = toX(e.p[0]),
+            y = toY(e.p[2]);
+          const isTgt = e.n === targetName;
+          if (isTgt) targetPt = [x, y];
+          ctx.strokeStyle = isTgt ? "#fde047" : "#a78bfa";
+          ctx.lineWidth = isTgt ? 2.2 : 1.4;
+          ctx.beginPath();
+          ctx.arc(x, y, isPip ? (isTgt ? 5.5 : 3.8) : (isTgt ? 8 : 5.5), 0, Math.PI * 2);
+          ctx.stroke();
+          if (!isPip || isTgt) {
+            ctx.fillStyle = isTgt ? "#fde047" : "rgba(196, 181, 253, 0.85)";
+            ctx.fillText(e.n, x + 6, y + 3);
+          }
+        });
+
+        // 2. 绘制场景机关 / 道具 GOB (琥珀金圆点)
+        (s.objs || []).forEach((o) => {
+          if (!o.p || o.p.length < 3) return;
+          const x = toX(o.p[0]),
+            y = toY(o.p[2]);
+          const isTgt = o.n === targetName;
+          if (isTgt) targetPt = [x, y];
+          ctx.fillStyle = isTgt ? "#fde047" : "#f59e0b";
+          ctx.beginPath();
+          ctx.arc(x, y, isPip ? (isTgt ? 5 : 3.2) : (isTgt ? 6.5 : 4.2), 0, Math.PI * 2);
+          ctx.fill();
+          if (!isPip || isTgt) {
+            ctx.fillStyle = isTgt ? "#fde047" : "rgba(251, 191, 36, 0.88)";
+            ctx.fillText(o.n, x + 6, y + 3);
+          }
+        });
+
+        // 3. 绘制 NPC (青玉菱形)
+        (s.npcs || []).forEach((n) => {
+          if (!n.p || n.p.length < 3) return;
+          const x = toX(n.p[0]),
+            y = toY(n.p[2]);
+          const isTgt = n.n === targetName;
+          if (isTgt) targetPt = [x, y];
+          const r = isPip ? 4.2 : 6;
+          ctx.fillStyle = isTgt ? "#fde047" : "#38bdf8";
+          ctx.beginPath();
+          ctx.moveTo(x, y - r);
+          ctx.lineTo(x + r, y);
+          ctx.lineTo(x, y + r);
+          ctx.lineTo(x - r, y);
+          ctx.closePath();
+          ctx.fill();
+          if (!isPip || isTgt) {
+            ctx.fillText(n.n, x + 6, y + 4);
+          }
+        });
+
+        // 4. 绘制迷宫怪物 (赤红三角)
+        (s.mons || []).forEach((m) => {
+          if (!m.p || m.p.length < 3) return;
+          const x = toX(m.p[0]),
+            y = toY(m.p[2]);
+          const r = isPip ? 3.8 : 5;
+          ctx.fillStyle = "#f87171";
+          ctx.beginPath();
+          ctx.moveTo(x, y - r);
+          ctx.lineTo(x + r, y + r);
+          ctx.lineTo(x - r, y + r);
+          ctx.closePath();
           ctx.fill();
         });
-      }
 
-      // 6. 绘制当前领队位置与交互光束
-      if (s.ldr?.p?.length >= 3) {
-        const lx = toX(s.ldr.p[0]),
-          ly = toY(s.ldr.p[2]);
-        if (targetPt) {
-          ctx.save();
-          ctx.strokeStyle = "rgba(253, 224, 71, 0.78)";
+        // 5. 绘制本幕内领队移动历史轨迹
+        if (sceneTrail.length > 1) {
+          ctx.strokeStyle = "rgba(52, 211, 153, 0.72)";
+          ctx.lineWidth = isPip ? 1.8 : 2.5;
+          ctx.beginPath();
+          sceneTrail.forEach((t, idx) => {
+            const x = toX(t.p[0]),
+              y = toY(t.p[2]);
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+          sceneTrail.forEach((t) => {
+            ctx.fillStyle = "rgba(52, 211, 153, 0.5)";
+            ctx.beginPath();
+            ctx.arc(toX(t.p[0]), toY(t.p[2]), isPip ? 2 : 3, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
+
+        // 6. 绘制当前领队位置与交互光束
+        if (s.ldr?.p?.length >= 3) {
+          const lx = toX(s.ldr.p[0]),
+            ly = toY(s.ldr.p[2]);
+          if (targetPt) {
+            ctx.save();
+            ctx.strokeStyle = "rgba(253, 224, 71, 0.82)";
+            ctx.lineWidth = isPip ? 1.5 : 2;
+            ctx.setLineDash([5, 3]);
+            ctx.beginPath();
+            ctx.moveTo(lx, ly);
+            ctx.lineTo(targetPt[0], targetPt[1]);
+            ctx.stroke();
+            ctx.restore();
+          }
+          // 光晕
+          ctx.fillStyle = "rgba(52, 211, 153, 0.25)";
+          ctx.beginPath();
+          ctx.arc(lx, ly, isPip ? 10 : 15, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 领队核心圆点
+          ctx.fillStyle = "#34d399";
+          ctx.beginPath();
+          ctx.arc(lx, ly, isPip ? 5 : 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 1.8;
+          ctx.stroke();
+
+          // 朝向箭头
+          const rad = ((s.ldr.yaw || 0) * Math.PI) / 180;
+          ctx.strokeStyle = "#fde047";
           ctx.lineWidth = 2;
-          ctx.setLineDash([6, 4]);
           ctx.beginPath();
           ctx.moveTo(lx, ly);
-          ctx.lineTo(targetPt[0], targetPt[1]);
+          ctx.lineTo(lx + Math.sin(rad) * (isPip ? 10 : 14), ly + Math.cos(rad) * (isPip ? 10 : 14));
           ctx.stroke();
-          ctx.restore();
+
+          if (!isPip) {
+            ctx.fillStyle = "#ecfdf5";
+            ctx.font = "bold 12px sans-serif";
+            ctx.fillText(\`\${s.ldr.n} (\${s.ldr.p[0]}, \${s.ldr.p[1]}, \${s.ldr.p[2]})\`, lx + 12, ly - 10);
+          }
         }
-        // 光晕
-        ctx.fillStyle = "rgba(52, 211, 153, 0.25)";
-        ctx.beginPath();
-        ctx.arc(lx, ly, 15, 0, Math.PI * 2);
-        ctx.fill();
 
-        // 领队核心圆点
-        ctx.fillStyle = "#34d399";
-        ctx.beginPath();
-        ctx.arc(lx, ly, 7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        // 朝向箭头
-        const rad = ((s.ldr.yaw || 0) * Math.PI) / 180;
-        ctx.strokeStyle = "#fde047";
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(lx, ly);
-        ctx.lineTo(lx + Math.sin(rad) * 14, ly + Math.cos(rad) * 14);
-        ctx.stroke();
-
-        ctx.fillStyle = "#ecfdf5";
-        ctx.font = "bold 12px sans-serif";
-        ctx.fillText(\`\${s.ldr.n} (\${s.ldr.p[0]}, \${s.ldr.p[1]}, \${s.ldr.p[2]})\`, lx + 12, ly - 10);
+        if (isPip) {
+          ctx.fillStyle = "rgba(248, 250, 252, 0.88)";
+          ctx.font = "bold 10.5px monospace";
+          ctx.fillText("🧭 2D 导航雷达 (PiP)", rx0 + 8, ry0 + 14);
+        }
+        ctx.restore();
       }
 
-      // 7. 场景左上角水墨铭牌与特殊状态横幅（五灵战斗 / 御剑飞行 / 大结局）
+      // 7. 场景左上角水墨铭牌与左下角角色实时坐标铭牌
       ctx.fillStyle = "rgba(9, 17, 27, 0.78)";
-      ctx.fillRect(12, 12, 310, 44);
-      ctx.strokeStyle = "rgba(108, 180, 232, 0.35)";
-      ctx.strokeRect(12, 12, 310, 44);
+      ctx.fillRect(12, 12, 340, 44);
+      ctx.strokeStyle = "rgba(108, 180, 232, 0.42)";
+      ctx.strokeRect(12, 12, 340, 44);
       ctx.fillStyle = "#f8fafc";
       ctx.font = "bold 14px serif";
       ctx.fillText(\`\${s.w}/\${s.sc} · \${s.title || "仙剑四场景"}\`, 22, 32);
       ctx.fillStyle = "#94a3b8";
-      ctx.font = "11.5px monospace";
-      ctx.fillText(\`累计胜场: \${s.cbt?.v ?? 0} 胜 | 渲染: \${s.gl?.[0] ?? 0} DC\`, 22, 48);
+      ctx.font = "11px monospace";
+      ctx.fillText(
+        \`\${show3dBg ? "🎮 OpenPAL4 原版3D光栅化" : "🧭 2D 战术雷达"} | 胜场:\${s.cbt?.v ?? 0} | \${s.gl?.[0] ?? 0} DC\`,
+        22,
+        48,
+      );
+
+      if (show3dBg && s.ldr?.p?.length >= 3) {
+        ctx.fillStyle = "rgba(9, 17, 27, 0.76)";
+        ctx.fillRect(12, H - 38, 275, 26);
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.45)";
+        ctx.strokeRect(12, H - 38, 275, 26);
+        ctx.fillStyle = "#ecfdf5";
+        ctx.font = "bold 11.5px monospace";
+        ctx.fillText(
+          \`👤 \${s.ldr.n} (\${s.ldr.p[0]}, \${s.ldr.p[1]}, \${s.ldr.p[2]}) · 朝向 \${s.ldr.yaw || 0}°\`,
+          20,
+          H - 21,
+        );
+      }
 
       if (s.tool === "combat_action" || s.cbt?.act || /combat_victory/i.test(s.ev)) {
         ctx.fillStyle = "rgba(168, 46, 38, 0.88)";
@@ -1778,10 +1916,10 @@ node bench/board.mjs</code></pre>
 
       if (s.clr) {
         ctx.fillStyle = "rgba(31, 110, 74, 0.92)";
-        ctx.fillRect(W / 2 - 175, H - 54, 350, 40);
+        ctx.fillRect(W / 2 - 175, H - 84, 350, 40);
         ctx.fillStyle = "#fff";
         ctx.font = "bold 15px serif";
-        ctx.fillText("🏆 百年之后青鸾峰重逢 · 全四章圆满通关！", W / 2 - 155, H - 29);
+        ctx.fillText("🏆 百年之后青鸾峰重逢 · 全四章圆满通关！", W / 2 - 155, H - 59);
       }
     }
 
@@ -1881,6 +2019,12 @@ node bench/board.mjs</code></pre>
     speedEl.addEventListener("change", () => {
       if (timer) startPlay();
     });
+    if (viewModeEl) {
+      viewModeEl.addEventListener("change", () => {
+        const r = runs[curRunIdx];
+        if (r) drawRadar(r, curStepIdx);
+      });
+    }
     sliderEl.addEventListener("input", () => {
       stopPlay();
       setStep(Number(sliderEl.value));
@@ -1944,6 +2088,8 @@ node bench/board.mjs</code></pre>
         ...calls,
       ].map((s) => {
         const st = s.state || {};
+        const scKey = \`\${st.world || ""}/\${st.scene || ""}\`;
+        const fallbackImg = sceneFrameMap[scKey] || worldFrameMap[st.world || ""] || "";
         return {
           step: s.step ?? 0,
           tool: s.tool || "step",
@@ -1954,6 +2100,7 @@ node bench/board.mjs</code></pre>
           w: st.world || "",
           sc: st.scene || "",
           title: st.title || "",
+          img: fallbackImg ? \`frames/\${fallbackImg}\` : "",
           clr: Boolean(st.game_cleared),
           ldr: st.leader
             ? {

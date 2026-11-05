@@ -203,6 +203,8 @@ struct AgentPal4GlesStats {
     std::uint64_t buffers_uploaded;
 };
 AgentPal4GlesStats AgentPal4GetGlesStats(void);
+void AgentPal4SetRasterizeEnabled(bool enabled);
+bool AgentPal4GetRasterizeEnabled(void);
 
 #ifdef __cplusplus
 }

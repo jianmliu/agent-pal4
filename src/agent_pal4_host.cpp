@@ -1,5 +1,6 @@
 #include "pal4/portable/chapter_host.h"
 #include "pal4/portable/collision_surface.h"
+#include "pal4/collision_triangle_containment.h"
 #include "pal4/portable/csb.h"
 #include "pal4/portable/game_path.h"
 #include "pal4/portable/gbk.h"
@@ -1830,9 +1831,22 @@ public:
         if (index < 0 || index >= 4) return false;
         h.players.SetLeader(index, [&](std::uint32_t selected) {
             h.controller.SelectActor(selected, h.arena->description.type);
-            const auto pos = h.players.Slots()[selected].position;
+            const auto& selected_slot = h.players.Slots()[selected];
+            const auto pos = selected_slot.position;
             if (h.game_placement) h.game_placement->SetCurrent(pos);
             if (h.camera_follow) h.camera_follow->SeekToPlayer();
+            if (using_real_cpk_ && selected_slot.actor) {
+                h.instance_scene = selected_slot.actor->mesh;
+                h.clip = -1;
+                for (std::size_t i = 0; i < selected_slot.actor->clips.size(); ++i) {
+                    if (selected_slot.actor->clips[i].name == selected_slot.animation) {
+                        h.clip = static_cast<int>(i);
+                        break;
+                    }
+                }
+                h.player_render_clip.Sample(*selected_slot.actor, h.clip, 0, h.instance_scene.vertices);
+                h.instance_renderer.Upload(h.instance_scene);
+            }
         });
         return h.players.Leader() == static_cast<std::uint32_t>(index) &&
                h.controller.State().actor == static_cast<std::uint32_t>(index);
@@ -2501,6 +2515,254 @@ private:
         h.renderer.BeginFrame(800, 600);
         h.renderer.DrawScene(h.arena->world, view_proj, identity);
     }
+
+public:
+    bool RenderFrameToBmp(
+        const std::string& out_path,
+        int width = 640,
+        int height = 360,
+        std::optional<float> yaw_override = std::nullopt,
+        float pitch_deg = 22.0f,
+        float req_dist = 0.0f) {
+        auto& h = *host_;
+        if (!h.arena || !h.game_camera || !h.players.Prepared()) return false;
+        width = std::clamp(width, 64, 1024);
+        height = std::clamp(height, 64, 1024);
+
+        const auto leader_idx = h.players.Leader();
+        const auto& leader = h.players.Slots()[leader_idx];
+        const auto pos = leader.position;
+        float actor_radius = 40.0f;
+        if (leader.actor) {
+            if (const auto sphere = ActorBindSphere(*leader.actor)) {
+                actor_radius = std::clamp((*sphere)[3], 25.0f, 65.0f);
+            }
+        }
+        const std::array<float, 3> target{pos[0], pos[1] + actor_radius * 1.05f, pos[2]};
+
+        const float span_x = h.arena->world.maximum[0] - h.arena->world.minimum[0];
+        const float span_z = h.arena->world.maximum[2] - h.arena->world.minimum[2];
+        const bool is_small_indoor = (std::max(span_x, span_z) < 600.0f);
+        const float center_x = 0.5f * (h.arena->world.minimum[0] + h.arena->world.maximum[0]);
+        const float center_z = 0.5f * (h.arena->world.minimum[2] + h.arena->world.maximum[2]);
+
+        float base_yaw = yaw_override.value_or(leader.rotation[1] + 200.0f);
+        if (!yaw_override) {
+            if (is_small_indoor) {
+                const float dx = center_x - pos[0];
+                const float dz = center_z - pos[2];
+                if (std::hypot(dx, dz) > 15.0f) {
+                    // Place camera toward room center looking at player
+                    base_yaw = std::atan2(dx, dz) * 57.2957795f + 180.0f;
+                }
+            } else if (h.scene_npcs) {
+                float best_d = 260.0f;
+                for (const auto& npc : h.scene_npcs->States()) {
+                    if (!npc.active) continue;
+                    const float dx = npc.position[0] - pos[0];
+                    const float dz = npc.position[2] - pos[2];
+                    const float d = std::hypot(dx, dz);
+                    if (d > 2.0f && d < best_d) {
+                        best_d = d;
+                        base_yaw = std::atan2(-dx, -dz) * 57.2957795f + 22.0f;
+                    }
+                }
+            }
+        }
+
+        const float desired_dist = (req_dist > 1.0f) ? req_dist : (is_small_indoor ? 165.0f : 235.0f);
+
+        auto probe_ray_segment = [&](const Point3& from, const Point3& to, bool include_collision_walls) -> float {
+            const Point3 dir{to[0] - from[0], to[1] - from[1], to[2] - from[2]};
+            const float len2 = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+            if (len2 <= 1.0f) return 1.0f;
+            const float seg_min_x = std::min(from[0], to[0]) - 2.0f;
+            const float seg_max_x = std::max(from[0], to[0]) + 2.0f;
+            const float seg_min_y = std::min(from[1], to[1]) - 2.0f;
+            const float seg_max_y = std::max(from[1], to[1]) + 2.0f;
+            const float seg_min_z = std::min(from[2], to[2]) - 2.0f;
+            const float seg_max_z = std::max(from[2], to[2]) + 2.0f;
+
+            float best_frac = 1.0f;
+            if (include_collision_walls) {
+                for (const auto& tri : h.arena->collision.wall) {
+                    Point3 hit{};
+                    if (!pal4::CollisionTriangleContainment::IntersectLineWithTriangle(from, dir, tri.points, &hit)) continue;
+                    const float proj = ((hit[0] - from[0]) * dir[0] + (hit[1] - from[1]) * dir[1] + (hit[2] - from[2]) * dir[2]) / len2;
+                    if (proj > 0.08f && proj < best_frac) best_frac = proj;
+                }
+            }
+            const auto& wv = h.arena->world.vertices;
+            for (std::size_t i = 0; i + 2 < wv.size(); i += 3) {
+                const auto& v0 = wv[i].position;
+                const auto& v1 = wv[i + 1].position;
+                const auto& v2 = wv[i + 2].position;
+                if (std::max({v0[0], v1[0], v2[0]}) < seg_min_x || std::min({v0[0], v1[0], v2[0]}) > seg_max_x) continue;
+                if (std::max({v0[1], v1[1], v2[1]}) < seg_min_y || std::min({v0[1], v1[1], v2[1]}) > seg_max_y) continue;
+                if (std::max({v0[2], v1[2], v2[2]}) < seg_min_z || std::min({v0[2], v1[2], v2[2]}) > seg_max_z) continue;
+                std::array<Point3, 3> pts{{{v0[0], v0[1], v0[2]}, {v1[0], v1[1], v1[2]}, {v2[0], v2[1], v2[2]}}};
+                Point3 hit{};
+                if (!pal4::CollisionTriangleContainment::IntersectLineWithTriangle(from, dir, pts, &hit)) continue;
+                const float proj = ((hit[0] - from[0]) * dir[0] + (hit[1] - from[1]) * dir[1] + (hit[2] - from[2]) * dir[2]) / len2;
+                if (proj > 0.12f && proj < best_frac) best_frac = proj;
+            }
+            return best_frac;
+        };
+
+        float chosen_yaw = base_yaw;
+        float chosen_dist = desired_dist;
+        if (yaw_override) {
+            h.game_camera->SetParameters(0, target, {chosen_yaw, pitch_deg, 0.0f}, desired_dist);
+            const float frac = probe_ray_segment(target, h.game_camera->Pose(0).eye, true);
+            if (frac < 1.0f) chosen_dist = std::max(85.0f, desired_dist * frac * 0.85f);
+        } else {
+            constexpr float kOffsets[] = {0.f, 30.f, -30.f, 60.f, -60.f, 90.f, -90.f, 120.f, -120.f, 150.f, -150.f, 180.f};
+            float best_score = -1e9f;
+            for (int idx = 0; idx < 12; ++idx) {
+                const float cand_yaw = base_yaw + kOffsets[idx];
+                h.game_camera->SetParameters(0, target, {cand_yaw, pitch_deg, 0.0f}, desired_dist);
+                const auto eye = h.game_camera->Pose(0).eye;
+                const float frac = probe_ray_segment(target, eye, true);
+                const float clear_dist = desired_dist * frac;
+                if (clear_dist < 80.0f) continue;
+                float score = clear_dist - idx * 4.0f;
+                if (is_small_indoor) {
+                    const Point3 bg_far{
+                        target[0] + (target[0] - eye[0]) * 3.2f,
+                        target[1] - 10.0f,
+                        target[2] + (target[2] - eye[2]) * 3.2f};
+                    const float bg_hit = probe_ray_segment(target, bg_far, false);
+                    if (bg_hit < 0.98f) {
+                        score += 180.0f; // Modeled room wall/interior behind character
+                    } else {
+                        score -= 180.0f; // Unmodeled cutaway void behind character
+                    }
+                }
+                if (score > best_score) {
+                    best_score = score;
+                    chosen_yaw = cand_yaw;
+                    chosen_dist = (frac < 1.0f) ? std::max(85.0f, clear_dist * 0.86f) : desired_dist;
+                }
+            }
+        }
+        h.game_camera->SetParameters(0, target, {chosen_yaw, pitch_deg, 0.0f}, chosen_dist);
+
+        const float aspect = static_cast<float>(width) / static_cast<float>(height);
+        const auto view_proj = h.game_camera->Matrix(aspect);
+        const auto cam_pose = h.game_camera->Pose(0);
+        const std::array<float, 16> identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+        AgentPal4SetRasterizeEnabled(true);
+        h.renderer.BeginFrame(width, height);
+
+        DrawEnvironmentGraphics(h, view_proj, true);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        h.renderer.DrawScene(h.arena->world, view_proj, identity);
+        DrawEnvironmentGraphics(h, view_proj, false);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+
+        if (h.scene_objects) {
+            const auto obj_states = h.scene_objects->States();
+            for (auto& obj : h.object_graphics) {
+                if (obj.index >= obj_states.size() || !obj.gpu) continue;
+                if (!h.scene_objects->Drawable(obj.index)) continue;
+                try {
+                    h.scene_objects->Sample(obj.index, obj.mesh.vertices, &obj.frames);
+                    obj.gpu->UpdateVertices(obj.mesh.vertices);
+                    const auto& st = obj_states[obj.index];
+                    auto model = InstanceMatrix(st.position, st.rotation);
+                    if (st.scale != 1.0f && st.scale > 0.0f) {
+                        for (int c = 0; c < 3; ++c) {
+                            for (int r = 0; r < 3; ++r) model[c * 4 + r] *= st.scale;
+                        }
+                    }
+                    obj.gpu->DrawScene(obj.mesh, view_proj, model);
+                } catch (...) {}
+            }
+        }
+
+        if (h.scene_npcs) {
+            const auto npc_states = h.scene_npcs->States();
+            for (auto& npc : h.npc_graphics) {
+                if (npc.index >= npc_states.size() || !npc.gpu) continue;
+                if (!h.scene_npcs->Drawable(npc.index)) continue;
+                try {
+                    h.scene_npcs->Sample(npc.index, npc.mesh.vertices, &npc.frames);
+                    npc.gpu->UpdateVertices(npc.mesh.vertices);
+                    const auto& st = npc_states[npc.index];
+                    const auto model = InstanceMatrix(st.position, st.rotation);
+                    npc.gpu->DrawScene(npc.mesh, view_proj, model);
+                } catch (...) {}
+            }
+        }
+
+        if (h.monster_graphics && h.monster_graphics->Uploaded() && h.monster_scene_runtime) {
+            auto& mons = h.monster_scene_runtime->Monsters();
+            for (std::size_t i = 0; i < mons.Size(); ++i) {
+                const auto handle = mons.Handle(i);
+                if (!mons.TransformBound(handle)) continue;
+                try {
+                    h.monster_graphics->Draw(handle, view_proj, cam_pose.eye);
+                } catch (...) {}
+            }
+        }
+
+        if (leader.actor && leader.visible && !h.instance_scene.vertices.empty()) {
+            try {
+                const auto model = InstanceMatrix(leader.position, leader.rotation);
+                h.instance_renderer.DrawScene(h.instance_scene, view_proj, model);
+            } catch (...) {}
+        }
+
+        std::vector<std::uint8_t> rgba(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 0);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+        AgentPal4SetRasterizeEnabled(false);
+
+        std::filesystem::path p(out_path);
+        if (p.has_parent_path()) {
+            std::filesystem::create_directories(p.parent_path());
+        }
+        std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+
+        const int row_stride = (width * 3 + 3) & ~3;
+        const std::uint32_t data_size = static_cast<std::uint32_t>(row_stride * height);
+        const std::uint32_t file_size = 54u + data_size;
+        std::uint8_t header[54]{};
+        header[0] = 'B';
+        header[1] = 'M';
+        std::memcpy(header + 2, &file_size, 4);
+        const std::uint32_t pixel_offset = 54u;
+        std::memcpy(header + 10, &pixel_offset, 4);
+        const std::uint32_t dib_size = 40u;
+        std::memcpy(header + 14, &dib_size, 4);
+        const std::int32_t bmp_w = width;
+        const std::int32_t bmp_h = height; // positive height = bottom-up, matching glReadPixels!
+        std::memcpy(header + 18, &bmp_w, 4);
+        std::memcpy(header + 22, &bmp_h, 4);
+        const std::uint16_t planes = 1u;
+        const std::uint16_t bpp = 24u;
+        std::memcpy(header + 26, &planes, 2);
+        std::memcpy(header + 28, &bpp, 2);
+        std::memcpy(header + 34, &data_size, 4);
+        out.write(reinterpret_cast<const char*>(header), 54);
+
+        std::vector<std::uint8_t> row(static_cast<std::size_t>(row_stride), 0);
+        for (int y = 0; y < height; ++y) {
+            const std::size_t src_row = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4;
+            for (int x = 0; x < width; ++x) {
+                row[x * 3 + 0] = rgba[src_row + x * 4 + 2]; // B
+                row[x * 3 + 1] = rgba[src_row + x * 4 + 1]; // G
+                row[x * 3 + 2] = rgba[src_row + x * 4 + 0]; // R
+            }
+            out.write(reinterpret_cast<const char*>(row.data()), row_stride);
+        }
+        return static_cast<bool>(out);
+    }
+
+private:
 
     void ProcessPendingArenaLoad() {
         auto& h = *host_;
@@ -3573,6 +3835,19 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         const int target_slot = static_cast<int>(ExtractJsonNumber(line, "target_slot").value_or(1));
         const std::string tag = engine.CombatAction(action, target_slot);
         return engine.ObserveJson(tag);
+    }
+    if (cmd == "render_frame") {
+        const auto path = ExtractJsonString(line, "path").value_or("/tmp/agent-pal4-frame.bmp");
+        const int w = static_cast<int>(ExtractJsonNumber(line, "width").value_or(640));
+        const int h = static_cast<int>(ExtractJsonNumber(line, "height").value_or(360));
+        std::optional<float> yaw_opt;
+        if (auto yv = ExtractJsonNumber(line, "yaw")) yaw_opt = static_cast<float>(*yv);
+        const float pitch = static_cast<float>(ExtractJsonNumber(line, "pitch").value_or(22.0));
+        const float dist = static_cast<float>(ExtractJsonNumber(line, "distance").value_or(0.0));
+        const bool ok = engine.RenderFrameToBmp(path, w, h, yaw_opt, pitch, dist);
+        return std::string("{\"ok\":") + (ok ? "true" : "false") +
+               ",\"event\":\"frame_rendered\",\"path\":\"" + EscapeJson(path) +
+               "\",\"width\":" + std::to_string(w) + ",\"height\":" + std::to_string(h) + "}";
     }
     return "{\"ok\":false,\"error\":\"unknown command: " + EscapeJson(cmd) + "\"}";
 }
