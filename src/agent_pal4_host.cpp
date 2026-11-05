@@ -674,8 +674,13 @@ public:
         SetChapterInteractionInput(h, false);
     }
 
+    void SetTimeScale(float scale) {
+        time_scale_ = std::clamp(scale, 0.25f, 30.0f);
+    }
+
     void AdvanceUntilInteractive(int max_frames = 2400) {
         auto& h = *host_;
+        const float dt = (1.0f / 30.0f) * time_scale_;
         for (int i = 0; i < max_frames; ++i) {
             AutoConfigureDialog();
             if (combat_.active) break;
@@ -687,7 +692,7 @@ public:
             }
             if (h.game && h.game->State() == ScriptState::failed) break;
             if (!using_real_cpk_ && (!h.game || h.game->State() == ScriptState::idle)) break;
-            AdvanceHostFrame(1.0f / 30.0f);
+            AdvanceHostFrame(dt);
         }
         AutoConfigureDialog();
     }
@@ -724,12 +729,15 @@ public:
         }
         const std::string before_w = h.arena ? h.arena->description.world : "";
         const std::string before_s = h.arena ? h.arena->description.scene : "";
+        bool is_touch_event = false;
         if (!target.empty()) {
             std::optional<Point3> target_pos;
             if (h.scene_npcs) {
-                for (const auto& s : h.scene_npcs->States()) {
-                    if (s.name == target) {
-                        target_pos = s.position;
+                const auto states = h.scene_npcs->States();
+                for (std::size_t i = 0; i < states.size(); ++i) {
+                    const bool match_script = !pure_mode_ && h.scene_npcs->InteractionScript(i) == target;
+                    if (states[i].name == target || match_script) {
+                        target_pos = states[i].position;
                         break;
                     }
                 }
@@ -761,6 +769,7 @@ public:
                     if (states[i].name == target ||
                         (!pure_mode_ && i < h.arena->catalog.events.size() && h.arena->catalog.events[i].script == target)) {
                         target_pos = EventTriggerPoint(i);
+                        is_touch_event = (states[i].type == 1);
                         break;
                     }
                 }
@@ -769,23 +778,18 @@ public:
                 const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
                 const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
                 if (dist > 1.5f) {
-                    (void)MoveTo((*target_pos)[0], (*target_pos)[1], (*target_pos)[2], 220);
-                }
-                const bool same_scene = h.arena && h.arena->description.world == before_w && h.arena->description.scene == before_s;
-                if (same_scene && (!h.dialog || !h.dialog->View().visible)) {
-                    const auto after_pos = h.players.Slots()[h.players.Leader()].position;
-                    if (std::hypot((*target_pos)[0] - after_pos[0], (*target_pos)[2] - after_pos[2]) > 5.0f) {
-                        h.players.SetPosition(h.players.Leader(), *target_pos);
-                    }
+                    h.players.SetPosition(h.players.Leader(), *target_pos);
                 }
             }
         }
         SetChapterInteractionInput(h, false);
         AdvanceHostFrame(1.0f / 30.0f);
-        SetChapterInteractionInput(h, true);
-        AdvanceHostFrame(1.0f / 30.0f);
-        SetChapterInteractionInput(h, false);
-        AdvanceHostFrame(1.0f / 30.0f);
+        if (!is_touch_event) {
+            SetChapterInteractionInput(h, true);
+            AdvanceHostFrame(1.0f / 30.0f);
+            SetChapterInteractionInput(h, false);
+            AdvanceHostFrame(1.0f / 30.0f);
+        }
         if (!target.empty() && h.arena &&
             h.arena->description.world == before_w &&
             h.arena->description.scene == before_s &&
@@ -829,7 +833,8 @@ public:
             if (!dispatched && h.scene_npcs && h.event_scripts && h.arena) {
                 const auto states = h.scene_npcs->States();
                 for (std::size_t i = 0; i < states.size(); ++i) {
-                    if (states[i].name == target && h.scene_npcs->InteractionEnabled(i)) {
+                    const bool match_script = !pure_mode_ && h.scene_npcs->InteractionScript(i) == target;
+                    if ((states[i].name == target || match_script) && h.scene_npcs->InteractionEnabled(i)) {
                         const auto script = h.scene_npcs->InteractionScript(i);
                         if (!script.empty()) {
                             h.event_scripts->LoadWorld(h.arena->description.world);
@@ -838,6 +843,10 @@ public:
                         break;
                     }
                 }
+            }
+            if (!dispatched && !pure_mode_ && h.event_scripts && h.arena && target.starts_with("func")) {
+                h.event_scripts->LoadWorld(h.arena->description.world);
+                dispatched = (h.event_scripts->Push(h.arena->description.world, "void " + std::string(target) + "()") == 0);
             }
             if (dispatched) {
                 AdvanceHostFrame(1.0f / 30.0f);
@@ -870,25 +879,61 @@ public:
         if (h.game) {
             h.game->Clear();
         }
+        h.error.clear();
         ScriptCall call;
         call.system_id = 65;
         std::string base_scene(scene);
         std::string resource_scene;
-        if (world == "M06" && scene.size() == 2 && std::isdigit(static_cast<unsigned char>(scene[0])) &&
-            std::isalpha(static_cast<unsigned char>(scene[1]))) {
-            base_scene = std::string(scene.substr(0, 1));
+        const auto pos_sep = scene.find(':');
+        if (pos_sep != std::string_view::npos) {
+            base_scene = std::string(scene.substr(0, pos_sep));
+            resource_scene = std::string(scene.substr(pos_sep + 1));
+        } else if ((world == "M06" || world == "M07") && scene.size() >= 2 &&
+                   std::isdigit(static_cast<unsigned char>(scene[0])) &&
+                   std::isalpha(static_cast<unsigned char>(scene.back()))) {
+            base_scene = std::string(scene.substr(0, scene.size() - 1));
             resource_scene = std::string(scene);
+        } else if ((world == "Q03" || world == "Q05" || world == "Q07" || world == "Q08" || world == "Q13" || world == "Q15") &&
+                   scene.size() >= 4 && std::islower(static_cast<unsigned char>(scene.back()))) {
+            base_scene = std::string(scene.substr(0, scene.size() - 1));
+            resource_scene = std::string(scene);
+        } else if (world == "Q04" && scene == "CN05C") {
+            base_scene = "CN05";
+            resource_scene = "CN05C";
         }
         call.arguments = {std::string(world), base_scene, resource_scene, false};
         (void)h.game_arena->Invoke(ScriptRequest{ScriptToken{999999, 1}, call});
         AdvanceArenaLoad(h);
         AdvanceUntilInteractive(600);
         RenderHeadlessFrame();
-        return h.arena && h.arena->description.world == world && h.arena->description.scene == scene;
+        const std::string expected_scene = resource_scene.empty() ? base_scene : resource_scene;
+        return h.arena && h.arena->description.world == world &&
+               (h.arena->description.scene == expected_scene || h.arena->description.scene == base_scene);
     }
 
     void SetQuestStage(std::int32_t stage) {
-        host_->game_globals[0] = stage;
+        auto& h = *host_;
+        while (h.dialog && h.dialog->View().visible) {
+            const auto v = h.dialog->View();
+            h.dialog->Confirm(v.generation, v.id);
+            h.dialog->Advance(0.1f);
+            (void)h.dialog->TakeCompletion();
+        }
+        if (h.game) {
+            h.game->Clear();
+        }
+        h.error.clear();
+        if (h.players.Prepared()) {
+            if (stage >= 10500) h.players.SetInTeam(1, true);
+            if (stage >= 20900) h.players.SetInTeam(2, true);
+            if (stage >= 70100) h.players.SetInTeam(3, true);
+        }
+        if (h.game_services && h.game_services->get_money && h.game_services->add_money) {
+            if (h.game_services->get_money() < 5000) {
+                h.game_services->add_money(5000, false);
+            }
+        }
+        h.game_globals[0] = stage;
     }
 
     std::string InspectCsb(std::string_view world, std::string_view fn_filter = {}) const {
@@ -992,6 +1037,12 @@ public:
                 out << ",\"syscalls\":[";
                 f = true;
                 for (auto sc : syscalls) { if (!f) out << ","; f = false; out << sc; }
+                out << "],\"ins\":[";
+                for (std::size_t k = 0; k < ins.size(); ++k) {
+                    if (k > 0) out << ",";
+                    out << "{\"i\":" << k << ",\"op\":" << static_cast<int>(ins[k].opcode)
+                        << ",\"arg\":" << std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(ins[k].operand)) << "}";
+                }
                 out << "]";
             }
             out << "}";
@@ -1418,7 +1469,7 @@ public:
         out << "\"title\":\"" << EscapeJson(h.arena ? h.arena->description.title : "") << "\",";
         const std::int32_t trial_goal = using_real_cpk_ ? 10300 : 200;
         const std::int32_t ch1_goal = using_real_cpk_ ? 10400 : 300;
-        const std::int32_t clear_goal = using_real_cpk_ ? 10400 : 1000;
+        const std::int32_t clear_goal = using_real_cpk_ ? 170000 : 1000;
         if (!pure_mode_) {
             out << "\"quest_stage\":" << h.game_globals[0] << ",";
             out << "\"trial_cleared\":" << (h.game_globals[0] >= trial_goal ? "true" : "false") << ",";
@@ -1629,7 +1680,8 @@ public:
             out << ",\"diagnostics\":{";
             out << "\"script_state\":\"" << state_str << "\",";
             out << "\"wait_kind\":\"" << wait_str << "\",";
-            out << "\"script_error\":\"" << EscapeJson(h.game ? h.game->Error() : "") << "\",";
+            const std::string err_msg = (h.game && !h.game->Error().empty()) ? h.game->Error() : h.error;
+            out << "\"script_error\":\"" << EscapeJson(err_msg) << "\",";
             out << "\"last_service_id\":" << (h.game_services ? h.game_services->last_service : 0u) << ",";
             out << "\"unhandled_calls\":[";
             for (std::size_t i = 0; i < unhandled_calls_.size(); ++i) {
@@ -1735,7 +1787,7 @@ private:
                 }
                 return {{}, false};
             }
-            if (req.call.system_id == 271 || req.call.system_id == 274) {
+            if (req.call.system_id == 271 || req.call.system_id == 274 || req.call.system_id == 315) {
                 if (host_->scene_npcs && req.call.arguments.size() >= 4) {
                     const auto& npc_name = std::get<std::string>(req.call.arguments[0]);
                     const Point3 pos{
@@ -1766,13 +1818,24 @@ private:
                 }
                 return {{}, false};
             }
-            if (req.call.system_id == 259 || req.call.system_id == 260) {
+            if (req.call.system_id == 259 || req.call.system_id == 313) {
                 if (req.call.arguments.size() >= 3) {
                     host_->players.SetPosition(
                         host_->players.Leader(),
                         {std::get<float>(req.call.arguments[0]),
                          std::get<float>(req.call.arguments[1]),
                          std::get<float>(req.call.arguments[2])});
+                }
+                return {{}, false};
+            }
+            if (req.call.system_id == 260 || req.call.system_id == 201) {
+                if (req.call.arguments.size() >= 4) {
+                    const auto idx = static_cast<std::size_t>(std::max<std::int32_t>(0, std::get<std::int32_t>(req.call.arguments[0])));
+                    host_->players.SetPosition(
+                        idx,
+                        {std::get<float>(req.call.arguments[1]),
+                         std::get<float>(req.call.arguments[2]),
+                         std::get<float>(req.call.arguments[3])});
                 }
                 return {{}, false};
             }
@@ -1803,36 +1866,44 @@ private:
             if (req.call.system_id == 161) {
                 return {true, false};
             }
-            if (req.call.system_id == 163) {
+            if (req.call.system_id == 131 || req.call.system_id == 198 ||
+                req.call.system_id == 208 || req.call.system_id == 220 ||
+                req.call.system_id == 229) {
+                return {std::int32_t(1), false};
+            }
+            if (req.call.system_id == 163 || req.call.system_id == 236) {
                 return {std::int32_t(0), false};
             }
-            if (req.call.system_id == 72 || req.call.system_id == 73 ||
-                req.call.system_id == 80 || req.call.system_id == 86 ||
-                req.call.system_id == 87 || req.call.system_id == 102 ||
-                req.call.system_id == 121 || req.call.system_id == 128 ||
-                req.call.system_id == 136 || req.call.system_id == 137 ||
-                req.call.system_id == 139 || req.call.system_id == 140 ||
-                req.call.system_id == 141 ||
-                req.call.system_id == 144 || req.call.system_id == 158 ||
-                req.call.system_id == 159 || req.call.system_id == 162 ||
-                req.call.system_id == 164 || req.call.system_id == 166 ||
-                req.call.system_id == 168 || req.call.system_id == 170 ||
-                req.call.system_id == 174 || req.call.system_id == 175 ||
-                req.call.system_id == 181 || req.call.system_id == 182 ||
-                req.call.system_id == 186 || req.call.system_id == 187 ||
-                req.call.system_id == 188 || req.call.system_id == 189 ||
-                req.call.system_id == 196 || req.call.system_id == 206 ||
-                req.call.system_id == 214 || req.call.system_id == 247 ||
-                req.call.system_id == 248 ||
-                req.call.system_id == 252 || req.call.system_id == 254 ||
-                req.call.system_id == 256 || req.call.system_id == 261 ||
-                req.call.system_id == 262 ||
-                req.call.system_id == 277 || req.call.system_id == 278 ||
-                req.call.system_id == 281 || req.call.system_id == 285 ||
-                req.call.system_id == 286 || req.call.system_id == 307 ||
-                req.call.system_id == 308 || req.call.system_id == 312 ||
-                req.call.system_id == 314) {
-                return {{}, false};
+            switch (req.call.system_id) {
+                case 58: case 59: case 60: case 68: case 72: case 73:
+                case 77: case 78: case 79: case 80: case 83: case 84:
+                case 85: case 86: case 87: case 88: case 90: case 102:
+                case 106: case 110: case 111: case 112: case 117: case 121:
+                case 123: case 124: case 126: case 127: case 128: case 129:
+                case 130: case 132: case 134: case 135: case 136: case 137:
+                case 138: case 139: case 140: case 141: case 142: case 143:
+                case 144: case 146: case 147: case 148: case 150: case 151:
+                case 152: case 153: case 158: case 159: case 162: case 164:
+                case 165: case 166: case 167: case 168: case 169: case 170:
+                case 171: case 172: case 173: case 174: case 175: case 176:
+                case 177: case 181: case 182: case 183: case 184: case 185:
+                case 186: case 187: case 188: case 189: case 196: case 197:
+                case 199: case 202: case 203: case 204: case 206: case 207:
+                case 209: case 210: case 212: case 213: case 214: case 215: case 221: case 222:
+                case 223: case 224: case 225: case 226: case 227: case 228:
+                case 231: case 232: case 233: case 234: case 237: case 238:
+                case 241: case 242: case 243: case 244: case 247: case 248:
+                case 251: case 252: case 254: case 256: case 261: case 262:
+                case 263: case 264: case 265: case 266: case 268: case 275:
+                case 277: case 278: case 281: case 282: case 283: case 284:
+                case 285: case 286: case 291: case 292: case 293: case 294:
+                case 295: case 296: case 297: case 298: case 299: case 300:
+                case 301: case 304: case 305: case 306: case 307: case 308:
+                case 309: case 310: case 311: case 312: case 314: case 316:
+                case 317: case 318:
+                    return {{}, false};
+                default:
+                    break;
             }
             if (unhandled_calls_.size() < 64) {
                 unhandled_calls_.push_back("id=" + std::to_string(req.call.system_id) + ":" + EncodeScriptCall(req.call));
@@ -1862,9 +1933,9 @@ private:
         if (h.dialog) {
             const auto view = h.dialog->View();
             if (view.visible && !view.configured) {
-                const std::uint32_t end = std::max<std::uint32_t>(1u, view.characters);
+                const std::uint32_t end = view.characters;
                 h.dialog->Configure(view.generation, view.id, std::span(&end, 1), 20.0f);
-                h.dialog->Advance(5.0f);
+                h.dialog->Advance(10.0f);
             }
         }
     }
@@ -2821,6 +2892,7 @@ private:
     std::string game_data_;
     bool using_real_cpk_{false};
     bool pure_mode_{false};
+    float time_scale_{3.0f};
     std::string prev_world_;
     std::string prev_scene_;
     std::map<std::string, std::string> ui_files_;
@@ -2891,9 +2963,16 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         return engine.ObserveJson(ok ? "warped:" + world + "/" + scene : "warp_failed");
     }
     if (cmd == "set_quest_stage") {
-        const auto stage = static_cast<std::int32_t>(ExtractJsonNumber(line, "quest_stage").value_or(0));
+        const auto stage = static_cast<std::int32_t>(
+            ExtractJsonNumber(line, "quest_stage").value_or(
+                ExtractJsonNumber(line, "stage").value_or(0)));
         engine.SetQuestStage(stage);
         return engine.ObserveJson("quest_stage_set");
+    }
+    if (cmd == "set_time_scale") {
+        const float scale = static_cast<float>(ExtractJsonNumber(line, "scale").value_or(3.0));
+        engine.SetTimeScale(scale);
+        return engine.ObserveJson("time_scale_set");
     }
     if (cmd == "inspect_csb") {
         const auto world = ExtractJsonString(line, "world").value_or("Q01");
