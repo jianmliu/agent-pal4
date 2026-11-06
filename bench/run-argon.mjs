@@ -261,26 +261,60 @@ async function main() {
   );
 
   let toolCalls = 0;
+  let callsInCurrentTurn = 0;
+  const MAX_PURE_CALLS_PER_TURN = 2;
   let clearedState = null;
+
+  const purgeUnauthorizedScripts = () => {
+    if (MODE !== 'pure') return [];
+    const removed = [];
+    try {
+      for (const ent of fs.readdirSync(tmpDir, { withFileTypes: true })) {
+        if (ent.name === 'pal4bench.mjs' || ent.name === 'host-work') continue;
+        if (ent.isFile() && /\.(mjs|cjs|js|sh|py|rb|pl)$/i.test(ent.name)) {
+          fs.unlinkSync(path.join(tmpDir, ent.name));
+          removed.push(ent.name);
+        }
+      }
+    } catch {}
+    return removed;
+  };
 
   const compactStateForModel = (state) => {
     if (!IS_REAL_CPK) return state;
-    const wp = state.journal?.waypoint || '';
-    const filterList = (list = [], max = 8) => {
+    const isPure = MODE === 'pure';
+    const wp = isPure ? '' : state.journal?.waypoint || '';
+    const filterList = (list = [], max = 12, kind = '') => {
       if (!Array.isArray(list)) return [];
-      const sorted = [...list].sort((a, b) => {
-        if (a.name === wp) return -1;
-        if (b.name === wp) return 1;
+      const cleaned = list.filter((item) => {
+        const nm = String(item?.name || '');
+        if (kind === 'objects' && /^(sound|effect|Jeffect|title)/i.test(nm)) return false;
+        if (kind === 'events' && (item?.type === 0 || item?.type === 4 || /^(wall|camWall)/i.test(nm))) return false;
+        return true;
+      });
+      const sorted = [...cleaned].sort((a, b) => {
+        if (!isPure && wp) {
+          if (a.name === wp) return -1;
+          if (b.name === wp) return 1;
+        }
         return (a.distance ?? 999) - (b.distance ?? 999);
       });
       return sorted.slice(0, max);
     };
+    const journal =
+      isPure && state.journal
+        ? {
+            summary: state.journal.summary,
+            ...(state.journal.compass ? { compass: state.journal.compass } : {}),
+          }
+        : state.journal;
     return {
       ...state,
-      npcs: filterList(state.npcs, 8),
-      objects: filterList(state.objects, 10),
-      events: filterList(state.events, 10),
-      monsters: filterList(state.monsters, 4),
+      ...(journal ? { journal } : {}),
+      npcs: filterList(state.npcs, 8, 'npcs'),
+      objects: filterList(state.objects, 12, 'objects'),
+      events: filterList(state.events, 12, 'events'),
+      monsters: filterList(state.monsters, 4, 'monsters'),
     };
   };
 
@@ -295,12 +329,58 @@ async function main() {
     }
     if (msg.method === 'tools/call') {
       const { name, arguments: args = {} } = msg.params || {};
+      const removedScripts = purgeUnauthorizedScripts();
+      if (MODE === 'pure' && removedScripts.length > 0) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    ok: false,
+                    error: `pure_mode_violation: external automation scripts (${removedScripts.join(', ')}) are forbidden in pure mode and have been removed. Issue commands directly via pal4bench.mjs step-by-step.`,
+                  }),
+                },
+              ],
+            },
+          })
+        );
+        return;
+      }
+      if (MODE === 'pure' && name !== 'observe') {
+        callsInCurrentTurn++;
+        if (callsInCurrentTurn > MAX_PURE_CALLS_PER_TURN) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      ok: false,
+                      error: `pure_mode_turn_limit: at most ${MAX_PURE_CALLS_PER_TURN} action commands are allowed per agent reasoning turn in pure mode. Do not batch or loop commands; inspect the current observation and decide your next step in the next turn.`,
+                    }),
+                  },
+                ],
+              },
+            })
+          );
+          return;
+        }
+      }
       toolCalls++;
       const payload = { cmd: name, ...args };
       const state = await host.rpc(payload);
       traceStream.write(JSON.stringify({ type: 'call', step: toolCalls, tool: name, args, state }) + '\n');
       console.log(
-        `[Step ${toolCalls}] ${name}(${JSON.stringify(args)}) -> scene=${state.world}/${state.scene} event=${state.event?.slice(0, 60)} leader=${state.leader?.name}@${JSON.stringify(state.leader?.position)} waypoint=${state.journal?.waypoint || '-'} combat=${state.combat?.active ? `round_${state.combat.round}` : `idle(v=${state.combat?.victories ?? 0})`} game_cleared=${state.game_cleared}`
+        `[Step ${toolCalls}] ${name}(${JSON.stringify(args)}) -> scene=${state.world}/${state.scene} event=${state.event?.slice(0, 60)} leader=${state.leader?.name}@${JSON.stringify(state.leader?.position)} compass=${JSON.stringify(state.journal?.compass || state.journal?.waypoint || '-')} combat=${state.combat?.active ? `round_${state.combat.round}` : `idle(v=${state.combat?.victories ?? 0})`} game_cleared=${state.game_cleared}`
       );
       if (state.game_cleared && !clearedState) {
         clearedState = state;
@@ -368,13 +448,13 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
 
   const pureGuide = [
     `You are playing Chinese Paladin 4 (仙剑奇侠传四 - OpenPAL4 C++20 Headless Runtime) in PURE (Zero-Prior / Zero-Walkthrough) mode.`,
-    `No external walkthrough, quest stage IDs, or internal script function names are exposed. You must explore and clear the game purely from in-game observations:`,
-    `- Inspect \`journal\` (your in-game Quest Journal 竹简 \`summary\` and Minimap Waypoint \`waypoint\`), \`npcs\`, \`objects\`, \`monsters\`, and \`events\` in each scene.`,
-    `- When \`journal.waypoint\` is an NPC/object/event name (e.g. \`"MO002"\`, \`"ev_Q01_Q01_1"\`, \`"light1_f"\`), call \`interact\` with \`{"target": "<waypoint>"}\` (or \`{"target": "<waypoint>", "repeat": 99}\` / \`13\` when collecting 99 wines or 13 nine-eye stones). When a puzzle mentions multiple switches/lamps in the same room (e.g. \`light1_f\` / \`light2_f\` / \`light3_f\` or \`huaRongDoor01_ev\` / \`temp\`), interact with each of them and then the exit event.`,
-    `- When \`journal.waypoint\` starts with \`"fly_to:<DEST>"\`, call \`fly_to\` with \`{"destination": "<DEST>"}\`. When it is \`"use_item:EarthBall"\`, call \`use_item\` with \`{"item": "EarthBall"}\`.`,
+    `No external walkthrough, quest stage IDs, internal script function names, or exact trigger IDs are spoiled. You must explore and clear the game purely from in-game observations:`,
+    `- Inspect \`journal\` (your in-game Quest Journal 竹简 \`summary\` and 3D compass coordinates \`compass: [x, y, z]\`), \`npcs\`, \`objects\`, \`monsters\`, \`events\`, \`inventory\`, and \`world_map\` in each scene.`,
+    `- Navigate toward distant targets (> 400 units away) using \`move_to\` (\`{"x": <x>, "y": <y>, "z": <z>}\`) before calling \`interact\` (\`{"target": "<name>"}\`). Calling \`interact\` on a target > 400 units away without moving first will fail with \`target_too_far\`.`,
+    `- Use \`fly_to\` (\`{"destination": "<world_code>"}\`) when your Quest Journal indicates flying to another region via sword flight, and \`use_item\` (\`{"item": "EarthBall"}\`) when using the Earth Spirit Pearl from your inventory.`,
     `- Whenever \`dialog.visible\` is true, call \`interact\` with \`{}\` to confirm/advance dialog.`,
-    `- Whenever \`combat.active\` is true, immediately call \`combat_action\` with \`{"action": "skill", "target_slot": 1}\` (or the active enemy slot) until \`combat.active\` becomes false.`,
-    `- Play briskly and continuously without stopping until \`"game_cleared": true\` is returned!`,
+    `- Whenever \`combat.active\` is true, call \`combat_action\` with \`{"action": "skill", "target_slot": 1}\` (or the active enemy slot) until \`combat.active\` becomes false.`,
+    `- STRICT PURE MODE FAIRNESS RULES: Do NOT write any helper/driver scripts (\`.mjs\`, \`.js\`, \`.sh\`, \`.py\`) or shell loops. At most ${MAX_PURE_CALLS_PER_TURN} action commands are permitted per agent reasoning turn.`,
   ];
 
   console.log('================================================================');
@@ -389,6 +469,7 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
   const maxSessions = IS_REAL_CPK ? 8 : 2;
 
   for (let session = 1; session <= maxSessions && !clearedState; session++) {
+    callsInCurrentTurn = 0;
     const curObs = session === 1 ? initialObs : await host.rpc({ cmd: 'observe' });
     if (curObs.game_cleared) {
       clearedState = curObs;
@@ -398,8 +479,10 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
       ...(MODE === 'pure' ? pureGuide : normalGuide),
       ``,
       `### Tool Execution Interface`,
-      `Call game tools ONLY by executing \`node ${helperFile} <tool_name> '<json_args>'\` via your shell/command tool. Do NOT read or access any files outside \`${tmpDir}\`.`,
-      `Tip: You can chain 2-3 sequential tool calls in a single shell command only when you are sure of the sequence, or call 1 tool per command and inspect the JSON response.`,
+      `Call game tools ONLY by executing \`node ${helperFile} <tool_name> '<json_args>'\` via your shell/command tool. Do NOT read or access any files outside \`${tmpDir}\`, and do NOT create any script files in \`${tmpDir}\`.`,
+      MODE === 'pure'
+        ? `Strict Turn Policy: Call 1 tool per command (at most ${MAX_PURE_CALLS_PER_TURN} per turn), inspect the JSON observation, and reason step-by-step.`
+        : `Tip: You can chain 2-3 sequential tool calls in a single shell command only when you are sure of the sequence, or call 1 tool per command and inspect the JSON response.`,
       `Available tools:`,
       toolsDoc,
       ``,
@@ -441,6 +524,7 @@ else console.log((j.result?.content || []).map(c => c.text || '').join('\\n'));
         const ev = JSON.parse(line);
         if (ev.event === 'step_update' && ev.step_update?.state === 'DONE' && ev.step_update?.step_type === 'agent_response') {
           agentTurns++;
+          callsInCurrentTurn = 0;
         }
         if (ev.event === 'result' && ev.result) {
           finalResult = ev.result;

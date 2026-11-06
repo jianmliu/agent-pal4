@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "state": "verified",
+  "runId": "opus-20261105T225345",
+  "model": "agy-cli:claude-opus-5-5-high",
+  "mode": "pure",
+  "realCpk": true,
+  "toolCalls": 586,
+  "agentTurns": 427,
+  "callsPerTurn": 1.37,
+  "moveToCalls": 210,
+  "maxRepeatUsed": 20,
+  "optimizationWarnings": [],
+  "finalWorld": "M19/2",
+  "gameCleared": true,
+  "victories": 18,
+  "episodeDigest": "1685424725041e0c009a33793e2813f3aa58c8df8afd53c344a30a6c64a93e95",
+  "verifiedAt": "2026-11-05T23:51:40.339Z",
+  "diffs": []
+}

@@ -25,8 +25,9 @@ const HOST_BIN =
 const OUT_ROOT = path.resolve(__dirname, "out");
 
 class HostProcess {
-  constructor(mode = "normal", gameData = "") {
+  constructor(mode = "normal", gameData = "", legacyReplay = false) {
     const args = [];
+    if (legacyReplay) args.push("--replay");
     if (gameData) args.push("--game-data", gameData);
     if (mode === "pure") args.push("--mode", "pure");
     this.proc = spawn(HOST_BIN, args, {
@@ -107,7 +108,11 @@ export async function verifyRunDir(runDir) {
   const gameData = realCpk
     ? process.env.AGENT_PAL4_GAME_DATA || "/Volumes/T7-Data/pal/pal4-data/仙剑奇侠传4/gamedata"
     : "";
-  const host = new HostProcess(mode, gameData);
+  const isLegacyPure =
+    mode === "pure" &&
+    (log.start?.initial?.journal?.waypoint !== undefined ||
+      !log.calls.some((c) => c.tool === "move_to"));
+  const host = new HostProcess(mode, gameData, isLegacyPure);
   const diffs = [];
 
   try {
@@ -195,6 +200,38 @@ export async function verifyRunDir(runDir) {
     }
 
     const digest = computeEpisodeDigest(runDir);
+    const agentTurns = Number(result.agentTurns) || 1;
+    const callsPerTurn = Number((log.calls.length / Math.max(1, agentTurns)).toFixed(2));
+    const moveToCalls = log.calls.filter((c) => c.tool === "move_to").length;
+    const effectiveRepeatCap = isLegacyPure ? 120 : 20;
+    const maxRepeatUsed = log.calls.reduce(
+      (mx, c) => Math.max(mx, Math.min(effectiveRepeatCap, Number(c.args?.repeat) || 1)),
+      1,
+    );
+    let usedExternalScript = false;
+    const clientPath = path.join(runDir, "client.jsonl");
+    if (fs.existsSync(clientPath)) {
+      const clientRaw = fs.readFileSync(clientPath, "utf8");
+      if (/\b(drive\.mjs|s\.sh|g\.sh)\b/.test(clientRaw)) {
+        usedExternalScript = true;
+      }
+    }
+    const optimizationWarnings = [];
+    if (mode === "pure") {
+      if (usedExternalScript) {
+        optimizationWarnings.push("external_driver_script_detected");
+      }
+      if (callsPerTurn > 2.5) {
+        optimizationWarnings.push(`excessive_turn_batching(${callsPerTurn}_calls_per_turn)`);
+      }
+      if (moveToCalls === 0 && log.calls.length > 20) {
+        optimizationWarnings.push("zero_move_to_navigation");
+      }
+      if (maxRepeatUsed > 20) {
+        optimizationWarnings.push(`excessive_repeat_batch(${maxRepeatUsed})`);
+      }
+    }
+
     const verdict = {
       ok: diffs.length === 0,
       state: diffs.length === 0 ? "verified" : "failed",
@@ -203,6 +240,11 @@ export async function verifyRunDir(runDir) {
       mode,
       realCpk,
       toolCalls: log.calls.length,
+      agentTurns,
+      callsPerTurn,
+      moveToCalls,
+      maxRepeatUsed,
+      optimizationWarnings,
       finalWorld: `${lastState.world}/${lastState.scene}`,
       gameCleared: Boolean(lastState.game_cleared),
       victories: lastState.combat?.victories ?? 0,

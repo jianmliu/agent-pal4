@@ -6,10 +6,19 @@
   "mode": "pure",
   "realCpk": true,
   "toolCalls": 253,
+  "agentTurns": 23,
+  "callsPerTurn": 11,
+  "moveToCalls": 0,
+  "maxRepeatUsed": 99,
+  "optimizationWarnings": [
+    "excessive_turn_batching(11_calls_per_turn)",
+    "zero_move_to_navigation",
+    "excessive_repeat_batch(99)"
+  ],
   "finalWorld": "M19/2",
   "gameCleared": true,
   "victories": 18,
   "episodeDigest": "316373dc5b52a5386e61b1134379e6879868287330ec1d9089510a043ead4579",
-  "verifiedAt": "2026-11-05T06:22:54.241Z",
+  "verifiedAt": "2026-11-05T22:38:19.068Z",
   "diffs": []
 }

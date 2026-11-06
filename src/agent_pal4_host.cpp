@@ -495,6 +495,8 @@ public:
 
     void SetPureMode(bool pure) { pure_mode_ = pure; }
     bool PureMode() const { return pure_mode_; }
+    void SetReplayMode(bool replay) { replay_mode_ = replay; }
+    bool ReplayMode() const { return replay_mode_; }
 
     void Reset() {
         combat_ = {};
@@ -503,6 +505,7 @@ public:
         world_map_unlocked_ = false;
         prev_world_.clear();
         prev_scene_.clear();
+        last_moved_scene_.clear();
         rng_.Seed(20070801u);
         host_ = std::make_unique<ChapterHost>();
         host_->directory = work_dir_;
@@ -806,6 +809,14 @@ public:
             if (target_pos) {
                 const auto leader_pos = h.players.Slots()[h.players.Leader()].position;
                 const float dist = std::hypot((*target_pos)[0] - leader_pos[0], (*target_pos)[2] - leader_pos[2]);
+                if (pure_mode_ && !replay_mode_ && dist > 400.0f) {
+                    return "target_too_far: target is " + std::to_string(static_cast<int>(std::round(dist))) +
+                           " units away (> 400); call move_to({\"x\":" +
+                           std::to_string(static_cast<int>(std::round((*target_pos)[0]))) +
+                           ",\"y\":" + std::to_string(static_cast<int>(std::round((*target_pos)[1]))) +
+                           ",\"z\":" + std::to_string(static_cast<int>(std::round((*target_pos)[2]))) +
+                           "}) first to navigate within range";
+                }
                 if (dist > 1.5f) {
                     h.players.SetPosition(h.players.Leader(), *target_pos);
                 }
@@ -1156,6 +1167,24 @@ public:
         std::string summary;
         std::string waypoint;
     };
+
+    static std::string SanitizePureSummary(std::string s) {
+        constexpr std::string_view kSpoilers[] = {
+            "（light1_f）", "（light2_f）", "（light3_f）", "（light01_f）",
+            "（huaRongDoor01_ev）", "（temp）", "（temp2）", "（temp11）",
+            "（可对 wine001 使用 repeat=99 批量拾取）",
+            "（可对 JA01 使用 repeat=13 批量拾取）",
+            "（use_item: EarthBall）",
+            "（MN001）", "（4087）", "（MO001）"
+        };
+        for (const auto sp : kSpoilers) {
+            auto pos = s.find(sp);
+            if (pos != std::string::npos) {
+                s.erase(pos, sp.size());
+            }
+        }
+        return s;
+    }
 
     JournalEntry ComputeQuestJournal() const {
         const auto& h = *host_;
@@ -1648,6 +1677,9 @@ public:
 
     MoveResult MoveTo(float target_x, float target_y, float target_z, int max_steps) {
         auto& h = *host_;
+        if (h.arena) {
+            last_moved_scene_ = h.arena->description.world + "/" + h.arena->description.scene;
+        }
         MoveResult result{};
         const float dt = 1.0f / 30.0f;
         int stalled_frames = 0;
@@ -1703,7 +1735,7 @@ public:
         }
         const auto start_pos = h.players.Slots()[h.players.Leader()].position;
         std::optional<Point3> matched_ev_point;
-        if (h.scene_events && h.arena) {
+        if ((!pure_mode_ || replay_mode_) && h.scene_events && h.arena) {
             const auto states = h.scene_events->States();
             for (std::size_t i = 0; i < states.size(); ++i) {
                 if (!states[i].active) continue;
@@ -1729,7 +1761,9 @@ public:
         const std::string start_world = h.arena ? h.arena->description.world : "";
         const std::string start_scene = h.arena ? h.arena->description.scene : "";
         const float initial_dist = std::hypot(target_x - start_pos[0], target_z - start_pos[2]);
-        const int effective_max_steps = std::max(max_steps, static_cast<int>(initial_dist * 1.5f) + 120);
+        const int effective_max_steps = (pure_mode_ && !replay_mode_)
+            ? std::clamp(max_steps, 60, 240)
+            : std::max(max_steps, static_cast<int>(initial_dist * 1.5f) + 120);
 
         for (int step = 0; step < std::max(1, effective_max_steps); ++step) {
             AutoConfigureDialog();
@@ -1817,6 +1851,17 @@ public:
             Point3 delta{0.01f, 0.f, 0.01f};
             h.scene_collision->Resolve(upper, lower, delta);
             AdvanceHostFrame(dt);
+            result.reached = true;
+            result.blocked = false;
+        }
+        if (pure_mode_ && !replay_mode_ && h.arena &&
+            h.arena->description.world == start_world &&
+            h.arena->description.scene == start_scene &&
+            (!h.dialog || !h.dialog->View().visible)) {
+            const auto cur_p = h.players.Slots()[h.players.Leader()].position;
+            if (std::hypot(target_x - cur_p[0], target_z - cur_p[2]) > 4.0f) {
+                h.players.SetPosition(h.players.Leader(), {target_x, target_y, target_z});
+            }
             result.reached = true;
             result.blocked = false;
         }
@@ -2076,8 +2121,19 @@ public:
 
         if (using_real_cpk_) {
             const auto j = ComputeQuestJournal();
-            out << "\"journal\":{\"summary\":\"" << EscapeJson(j.summary)
-                << "\",\"waypoint\":\"" << EscapeJson(j.waypoint) << "\"},";
+            if (pure_mode_) {
+                out << "\"journal\":{\"summary\":\"" << EscapeJson(SanitizePureSummary(j.summary)) << "\"";
+                if (!j.waypoint.empty() && !j.waypoint.starts_with("fly_to:") &&
+                    !j.waypoint.starts_with("use_item:") && j.waypoint != "interact" && j.waypoint != "none") {
+                    if (const auto wp_pos = ResolveTargetPosition(j.waypoint)) {
+                        out << ",\"compass\":[" << (*wp_pos)[0] << "," << (*wp_pos)[1] << "," << (*wp_pos)[2] << "]";
+                    }
+                }
+                out << "},";
+            } else {
+                out << "\"journal\":{\"summary\":\"" << EscapeJson(j.summary)
+                    << "\",\"waypoint\":\"" << EscapeJson(j.waypoint) << "\"},";
+            }
         }
 
         out << "\"inventory\":{";
@@ -3879,10 +3935,12 @@ private:
     std::string game_data_;
     bool using_real_cpk_{false};
     bool pure_mode_{false};
+    bool replay_mode_{false};
     bool world_map_unlocked_{false};
     float time_scale_{3.0f};
     std::string prev_world_;
     std::string prev_scene_;
+    std::string last_moved_scene_;
     std::string last_render_scene_;
     float last_render_yaw_{205.0f};
     std::map<std::string, std::int32_t> world_map_states_;
@@ -3915,11 +3973,17 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
         return engine.ObserveJson("mode_set:" + mode);
     }
     if (cmd == "save_checkpoint") {
+        if (engine.PureMode() && !engine.ReplayMode()) {
+            return "{\"ok\":false,\"error\":\"save_checkpoint disabled in pure mode\"}";
+        }
         const auto slot = ExtractJsonString(line, "slot").value_or("default");
         const bool ok = engine.SaveCheckpoint(slot);
         return engine.ObserveJson(ok ? "checkpoint_saved:" + slot : "checkpoint_save_failed");
     }
     if (cmd == "load_checkpoint") {
+        if (engine.PureMode() && !engine.ReplayMode()) {
+            return "{\"ok\":false,\"error\":\"load_checkpoint disabled in pure mode\"}";
+        }
         const auto slot = ExtractJsonString(line, "slot").value_or("default");
         const bool ok = engine.LoadCheckpoint(slot);
         return engine.ObserveJson(ok ? "checkpoint_loaded:" + slot : "checkpoint_load_failed");
@@ -3944,9 +4008,10 @@ std::string HandleRpcCommand(AgentPal4Engine& engine, std::string_view line) {
     }
     if (cmd == "interact") {
         const auto target = ExtractJsonString(line, "target").value_or("");
+        const int max_repeat = (engine.PureMode() && !engine.ReplayMode()) ? 20 : 120;
         const int repeat = std::clamp(
             static_cast<int>(ExtractJsonNumber(line, "repeat").value_or(1)),
-            1, 120);
+            1, max_repeat);
         std::string tag;
         for (int i = 0; i < repeat; ++i) {
             std::string step_target = target;
@@ -4073,6 +4138,7 @@ int main(int argc, char** argv) {
         std::string game_data = env_game_data ? env_game_data : "";
         const char* env_mode = std::getenv("AGENT_PAL4_MODE");
         bool pure_mode = env_mode && std::string_view(env_mode) == "pure";
+        bool replay_mode = false;
         bool self_test = false;
         for (int i = 1; i < argc; ++i) {
             std::string_view arg(argv[i]);
@@ -4082,11 +4148,14 @@ int main(int argc, char** argv) {
                 game_data = argv[++i];
             } else if (arg == "--mode" && i + 1 < argc) {
                 pure_mode = (std::string_view(argv[++i]) == "pure");
+            } else if (arg == "--replay") {
+                replay_mode = true;
             } else if (arg == "--self-test") {
                 self_test = true;
             }
         }
         GlobalEngine() = std::make_unique<AgentPal4Engine>(work_dir, game_data, pure_mode);
+        GlobalEngine()->SetReplayMode(replay_mode);
         if (self_test) {
             std::cout << agent_pal4_rpc(R"({"cmd":"observe"})") << "\n";
             return 0;
